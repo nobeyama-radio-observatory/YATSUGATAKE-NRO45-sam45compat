@@ -69,6 +69,7 @@ SAM45 のうち **A05〜A08 と A21〜A24** が故障しました。これは IF
 
 | 場所 | 中身 |
 |---|---|
+| `docs/plan.md` | 残りの作業の一覧 |
 | `docs/cosmos/` | 既存の COSMOS・SAM45 の構成（最終版に引き継ぐ） |
 | `docs/design/` | 肩代わりの検討・決めたこと（この暫定の構成に固有） |
 | `docs/` のほか | 比較の試験（`comparison/`）・運用手順（`operation/`） |
