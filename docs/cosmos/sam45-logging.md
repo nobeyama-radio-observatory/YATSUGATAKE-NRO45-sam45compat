@@ -40,8 +40,8 @@ Array ごとの欄は 32 要素の配列（添字 0 = A01 … 31 = A32）。
 | `dbebw` | 帯域 [Hz]（2000e6・1000e6・500e6・250e6・125e6・62.5e6・31.25e6・15.625e6） | 31.25e6 |
 | `dbechwid`・`dberes` | ch の間隔・分解能 [Hz] | 7629.39 |
 | `dflif` | 受信機の出力の 1st IF [Hz]（この後にも IF 系が続く。聞き取り） | 6e9 |
-| `dcent_freq`・`dtrk_freq`・`dfqdat_f0` | 中心の周波数 [Hz] | 43.122e9 |
-| `dfqdat_fq[2]`・`dfqdat_ch[2]` | 周波数と ch の対応の 2 点 | 43106.38 MHz ↔ ch 4096、43137.62 MHz ↔ ch 1（**ch が増えると周波数が下がる**） |
+| `dcent_freq`・`dfqdat_f0` | 中心の周波数 [Hz]（丸めていない） | 43.122e9（`dtrk_freq` は 43.0e9） |
+| `dfqdat_fq[2]`・`dfqdat_ch[2]` | 周波数と ch の対応の 2 点。**10 kHz に丸めてある**（サンプル） | 43106.38 MHz ↔ ch 4096、43137.62 MHz ↔ ch 1（**ch が増えると周波数が下がる**） |
 | `csid_type` | サイドバンド（USB・LSB・DSB） | USB |
 | `iary_ifatt` | R のときに足す IFATT [dB]（−9〜9。Tsys と強度の計算で使う） | 5 |
 | `iary_refno` | リファレンスのシンセサイザの番号 | 11 |
