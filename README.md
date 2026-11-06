@@ -73,15 +73,24 @@ SAM45 のうち **A05〜A08 と A21〜A24** が故障しました。これは IF
 | `docs/cosmos/` | 既存の COSMOS・SAM45 の構成（最終版に引き継ぐ） |
 | `docs/design/` | 肩代わりの検討・決めたこと（この暫定の構成に固有） |
 | `docs/` のほか | 比較の試験（`comparison/`）・運用手順（`operation/`） |
-| `src/` | COSMOS 連携のソフトウェア |
+| `src/sam45compat/` | 暫定 LC（Python 3.9 以上・numpy） |
+| `external/YATSUGATAKE/` | YATSUGATAKE（git submodule、版を固定） |
 | `config/` | 45m 固有の設定（Array の割り当てなど） |
-| `test/` | 試験 |
+| `tests/` | 試験（下の「試験」） |
 
 ## 使う YATSUGATAKE の版
 
 | YATSUGATAKE | 備考 |
 |---|---|
-| （未定） | 固定する方法（submodule かパッケージの版指定か）も未定 |
+| **v1.4.0** | `external/YATSUGATAKE` の git submodule で固定（2026-11-06）。clone の後に `git submodule update --init` |
+
+## 試験
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests -v
+# 実際の SAM45 のロギングを使う試験（サンプルはリポジトリに入れていない）
+SAM45_SAMPLE=/path/to/<ログ ID>.SAM45.<指示書名>.<group>.<project> PYTHONPATH=src python3 -m unittest discover -s tests -v
+```
 
 ## 廃止の条件
 

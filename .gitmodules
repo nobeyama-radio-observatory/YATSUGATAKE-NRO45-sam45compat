@@ -1,0 +1,3 @@
+[submodule "external/YATSUGATAKE"]
+	path = external/YATSUGATAKE
+	url = git@github.com:nobeyama-radio-observatory/YATSUGATAKE.git

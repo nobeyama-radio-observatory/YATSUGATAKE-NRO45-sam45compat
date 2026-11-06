@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sam45compat"
+version = "0.0.0"
+description = "SAM45 の故障した Array を YATSUGATAKE で肩代わりする暫定のソフトウェア"
+license = { text = "BSD-3-Clause" }
+requires-python = ">=3.9"
+dependencies = ["numpy"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
