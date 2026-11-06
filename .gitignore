@@ -1,0 +1,32 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 観測・試験のデータ（大きいので git に入れない）----
+data/
+*.fits
+*.nc
+*.npy
+*.npz
+*.h5
+
+# ---- ログ ----
+*.log
+
+# ---- 秘密情報・各自の設定（万一置いても入らないように）----
+.env
+*.local.*
+*.key
+*.pem
+
+# ---- エディタ・OS ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
