@@ -18,5 +18,13 @@
   "poll_s": 1.0,
   "ready_margin_s": 0.05,
   "ready_timeout_s": 5.0,
-  "skip_existing": true
+  "skip_existing": true,
+  "board": {
+    "host": "$B",
+    "ctl_port": 51000,
+    "data_port": 51001,
+    "bits": {"fine": "sam45-fine", "wide": "sam45-wide"},
+    "tmp_dir": "/var/tmp/sam45compat",
+    "keep_tmp": false
+  }
 }

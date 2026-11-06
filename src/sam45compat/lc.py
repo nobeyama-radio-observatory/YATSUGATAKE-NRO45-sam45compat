@@ -55,12 +55,13 @@ class LcConfig:
     tint_s: float = 0.01024
     scale: float = 1.0
     min_coverage: float = 0.9
-    flag_mask: int = 0
+    flag_mask: Optional[int] = None               # None なら recorder.DEFAULT_FLAG_MASK
     t_load_k: Optional[float] = yk.T_LOAD_K
     poll_s: float = 1.0
     ready_margin_s: float = 0.05                  # 積分の終わりからこれだけ後のダンプまで届いたら束ねる
     ready_timeout_s: float = 5.0                  # これだけ待っても届かなければ、ある分で束ねる（足りなければ無効）
     skip_existing: bool = True                    # 起動したときに既にある観測は扱わない
+    board: Dict[str, object] = field(default_factory=dict)   # board.BoardConfig の欄（host・ctl_port・data_port・bits・tmp_dir など）
 
     @classmethod
     def from_json(cls, path: str) -> "LcConfig":
@@ -140,8 +141,10 @@ class Session:
                 reason = f"分光計の準備に失敗: {e}"
                 self.notify(f"{self.name.log_id}: {reason}", "肩代わりする Array は idmy_flag = 1 で書く")
                 plan = mp.Plan(kind=None, windows={}, skipped={i: reason for i in targets})
+        from .recorder import DEFAULT_FLAG_MASK
+        mask = DEFAULT_FLAG_MASK if cfg.flag_mask is None else cfg.flag_mask
         self.builder = yk.YkspBuilder(plan, cfg.ifatt_mode, self.spec.dumps(), cfg.scale,
-                                      cfg.min_coverage, cfg.flag_mask, cfg.t_load_k)
+                                      cfg.min_coverage, mask, cfg.t_load_k)
         self._out = open(self.out_path, "wb")
         self._write(self.builder.header(ctl, obs, only_targets=True))
 
@@ -255,7 +258,8 @@ def main(argv=None) -> None:
         from .fake import FakeSpectrometer
         spec = FakeSpectrometer()
     else:
-        raise SystemExit("実機の分光計（specd.py・recorder.py）はまだ無い。--fake で動かす")
+        from .board import BoardConfig, BoardSpectrometer
+        spec = BoardSpectrometer(BoardConfig(**cfg.board), cfg.tint_s)
     LC(cfg, spec).run()
 
 

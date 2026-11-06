@@ -92,7 +92,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 SAM45_SAMPLE=/path/to/<ログ ID>.SAM45.<指示書名>.<group>.<project> PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-## 動かし方（今は模擬の分光計だけ）
+## 動かし方
 
 ```bash
 cp config/example.json my.json          # log_dir などを直す
@@ -102,6 +102,12 @@ python3 tools/replay.py <SAM45 のロギング> <log_dir> --speed 60 --log-id 20
 ```
 
 暫定 LC は `log_dir` に新しくできた SAM45 のロギングを追いかけ、同じ場所に `.YKSP.` のロギングを書く。
+`--fake` を外すと、設定の `board`（specd の宛先・ポート・bit の名前・一時ファイルの置き場所）の実機につなぐ。
+ボードが無くても、YATSUGATAKE の specd を PL なしで起こせば相手にできる（試験 `tests/test_board.py` もこれを使う）:
+
+```bash
+(cd external/YATSUGATAKE/sw/pynq && python3 specd.py --fake --cpu -1 --rt 0)   # bit は "default" の 1 つ
+```
 
 ## 廃止の条件
 
