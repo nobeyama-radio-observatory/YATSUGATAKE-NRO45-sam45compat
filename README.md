@@ -109,6 +109,13 @@ python3 tools/replay.py <SAM45 のロギング> <log_dir> --speed 60 --log-id 20
 (cd external/YATSUGATAKE/sw/pynq && python3 specd.py --fake --cpu -1 --rt 0)   # bit は "default" の 1 つ
 ```
 
+### 段階 1 の比較
+
+```bash
+# SAM45（A01〜A04）と YKSP（A05〜A08）を比べる。合体したロギングなら同じファイルを 2 回
+PYTHONPATH=src python3 -m sam45compat.compare <SAM45 のロギング> <YKSP のロギング> --npz cmp.npz
+```
+
 ### 段階 1.1・2
 
 ```bash
