@@ -109,6 +109,15 @@ python3 tools/replay.py <SAM45 のロギング> <log_dir> --speed 60 --log-id 20
 (cd external/YATSUGATAKE/sw/pynq && python3 specd.py --fake --cpu -1 --rt 0)   # bit は "default" の 1 つ
 ```
 
+### 段階 1.1・2
+
+```bash
+# 段階 1.1: 記録済みの SAM45 と YKSP のロギングを合体する（手でマージする前に）
+PYTHONPATH=src python3 -m sam45compat.combine <SAM45 のロギング> <YKSP のロギング> -o <合体したロギング>
+# 段階 2: 設定を output: "combined"・in_prefix: "_"・heartbeat_path にして暫定 LC を動かし、見張りを別に動かす
+PYTHONPATH=src python3 -m sam45compat.watchdog --log-dir <log_dir> --heartbeat <heartbeat_path>
+```
+
 ## 廃止の条件
 
 次のどちらかになったら、このリポジトリを archive します。
