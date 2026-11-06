@@ -1,0 +1,22 @@
+{
+  "log_dir": "/path/to/sam45/logging",
+  "out_dir": null,
+  "in_backend": "SAM45",
+  "in_prefix": "",
+  "out_backend": "YKSP",
+  "ifatt_mode": "follow",
+  "assign": {
+    "A05": ["A", 0], "A06": ["B", 0], "A07": ["C", 0], "A08": ["D", 0],
+    "A21": ["A", 1], "A22": ["B", 1], "A23": ["C", 1], "A24": ["D", 1]
+  },
+  "sam45_if_ascending": true,
+  "sam45_k_offset": 0.0,
+  "tint_s": 0.01024,
+  "scale": 1.0,
+  "min_coverage": 0.9,
+  "t_load_k": 293.0,
+  "poll_s": 1.0,
+  "ready_margin_s": 0.05,
+  "ready_timeout_s": 5.0,
+  "skip_existing": true
+}

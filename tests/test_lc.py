@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: BSD-3-Clause
+"""lc（暫定 LC の本体）と tools/replay の試験。"""
+
+import os
+import sys
+import tempfile
+import unittest
+
+from sam45compat import lc as lcm
+from sam45compat import mapping as mp
+from sam45compat import samlog as sl
+from sam45compat.fake import FakeSpectrometer
+from sam45compat.notify import Notifier
+from test_mapping import _obs
+from test_yksp import _sam45_records
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+import replay  # noqa: E402
+
+SAMPLE = os.environ.get("SAM45_SAMPLE")
+NAME = "20260101000000.SAM45.obs.grp.prj"
+
+
+def _write(path, recs):
+    with open(path, "wb") as f:
+        for r in recs:
+            f.write(r.to_bytes())
+
+
+class TestLC(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+        self.cfg = lcm.LcConfig(log_dir=self.dir, ready_timeout_s=5.0)
+        self.recs = _sam45_records(_obs(arrays=range(8)), range(8))
+        self.sam = os.path.join(self.dir, NAME)
+        self.yksp = os.path.join(self.dir, NAME.replace(".SAM45.", ".YKSP."))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run_growing(self, lc, now=0.0):
+        """SAM45 のロギングを 1 レコードずつ書き足しながら LC を回す。"""
+        for k in range(1, len(self.recs) + 1):
+            _write(self.sam, self.recs[:k])
+            lc.step(now)
+        lc.step(now)
+
+    def test_whole_observation(self):
+        spec = FakeSpectrometer()
+        note = Notifier()
+        lc = lcm.LC(self.cfg, spec, note)
+        self._run_growing(lc)
+        out = sl.read_file(self.yksp)
+        self.assertEqual([r.kind for r in out], ["L0", "L1"] + ["L2"] * 16 + ["ED"])
+        self.assertEqual(spec.calls[0][0], "prepare")
+        self.assertEqual(spec.calls[0][2], "fine")
+        self.assertIn("A0.if=3000", spec.calls[0][3])
+        self.assertEqual(spec.calls[-1], ("finish", "20260101000000"))
+        self.assertEqual(note.sent, [])
+        self.assertEqual(lc.sessions, {})
+
+    def test_closes_integration_without_waiting_next(self):
+        # 1 積分ぶんの L2（8 Array）が揃った時点で YKSP の L2 を書く（次の積分を待たない）
+        lc = lcm.LC(self.cfg, FakeSpectrometer())
+        _write(self.sam, self.recs[:2 + 8])    # L0・L1・ZERO の 8 個
+        lc.step(0.0)
+        self.assertEqual(sum(r.kind == "L2" for r in sl.read_file(self.yksp)), 4)
+        lc.close()
+
+    def test_waits_for_dumps_then_timeout(self):
+        spec = FakeSpectrometer()
+        spec.dumps().latest = None             # ダンプがまだ届いていない
+        lc = lcm.LC(self.cfg, spec)
+        _write(self.sam, self.recs[:2 + 16])   # ZERO と R
+        lc.step(0.0)
+        n = lambda: sum(r.kind == "L2" for r in sl.read_file(self.yksp))
+        self.assertEqual(n(), 4)                # ZERO は待たない、R は待つ
+        lc.step(1.0)
+        self.assertEqual(n(), 4)
+        lc.step(10.0)                           # 待ちすぎ → ある分で束ねる
+        self.assertEqual(n(), 8)
+        lc.close()
+
+    def test_prepare_failure_passes_through(self):
+        note = Notifier()
+        lc = lcm.LC(self.cfg, FakeSpectrometer(fail="ボードが応答しない"), note)
+        self._run_growing(lc)
+        out = sl.read_file(self.yksp)
+        l2 = [r for r in out if r.kind == "L2"]
+        self.assertEqual(len(l2), 16)
+        self.assertTrue(all(r.s.idmy_flag == 1 for r in l2))
+        self.assertEqual(sum("準備に失敗" in t for t in note.sent), 1)
+        self.assertEqual(out[-1].kind, "ED")
+
+    def test_skip_existing_and_other_files(self):
+        _write(self.sam, self.recs)
+        open(os.path.join(self.dir, "readme.txt"), "w").close()
+        lc = lcm.LC(self.cfg, FakeSpectrometer())
+        lc.step(0.0)
+        self.assertFalse(os.path.exists(self.yksp))   # 起動前からあった観測は扱わない
+
+    def test_prefix_for_stage2_input(self):
+        cfg = lcm.LcConfig(log_dir=self.dir, in_prefix="_")
+        lc = lcm.LC(cfg, FakeSpectrometer())
+        _write(os.path.join(self.dir, NAME), self.recs)          # 頭の無いものは見ない
+        _write(os.path.join(self.dir, "_" + NAME), self.recs)
+        lc.step(0.0)
+        lc.step(0.0)
+        self.assertTrue(os.path.exists(self.yksp))
+
+    def test_config_json(self):
+        p = os.path.join(os.path.dirname(__file__), "..", "config", "example.json")
+        cfg = lcm.LcConfig.from_json(p)
+        self.assertEqual(cfg.assign["A21"], mp.Slot("A", 1))
+        self.assertEqual(cfg.ifatt_mode, "follow")
+
+
+@unittest.skipUnless(SAMPLE, "SAM45_SAMPLE が無い")
+class TestReplaySample(unittest.TestCase):
+    def test_replay_through_lc(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = lcm.LcConfig(log_dir=d)
+            spec = FakeSpectrometer()
+            lc = lcm.LC(cfg, spec)
+            path = replay.replay(SAMPLE, d, speed=0, log_id="20261106120000",
+                                 on_chunk=lambda p: lc.step(0.0))
+            lc.step(0.0)
+            yname = os.path.join(d, os.path.basename(path).replace(".SAM45.", ".YKSP."))
+            out = sl.read_file(yname)
+            self.assertEqual(sum(r.kind == "L2" for r in out), 52 * 2)
+            self.assertEqual(out[-1].kind, "ED")
+            sam = sl.read_file(path)
+            with open(SAMPLE, "rb") as f:
+                self.assertEqual(b"".join(r.to_bytes() for r in sam), f.read())
+
+
+if __name__ == "__main__":
+    unittest.main()

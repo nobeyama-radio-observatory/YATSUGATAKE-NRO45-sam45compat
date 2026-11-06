@@ -92,6 +92,17 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 SAM45_SAMPLE=/path/to/<ログ ID>.SAM45.<指示書名>.<group>.<project> PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
+## 動かし方（今は模擬の分光計だけ）
+
+```bash
+cp config/example.json my.json          # log_dir などを直す
+PYTHONPATH=src python3 -m sam45compat.lc --config my.json --fake
+# 別の端末で、記録済みの SAM45 のロギングを書いている途中のように流す
+python3 tools/replay.py <SAM45 のロギング> <log_dir> --speed 60 --log-id 20261106130000
+```
+
+暫定 LC は `log_dir` に新しくできた SAM45 のロギングを追いかけ、同じ場所に `.YKSP.` のロギングを書く。
+
 ## 廃止の条件
 
 次のどちらかになったら、このリポジトリを archive します。
