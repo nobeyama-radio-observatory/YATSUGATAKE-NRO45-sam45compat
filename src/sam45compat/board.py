@@ -97,6 +97,12 @@ class BoardSpectrometer:
                 log.info("bit を載せ替える: %s → %s", cur, want)
                 self._ok(c, f"LOAD bit={want}")
             self._ok(c, "SET " + " ".join(plan.set_args(self.tint_s)))
+            # 時刻を答えられない（PPS の照合が一度でも外れると錨を打ち直すまで戻らない）と START が断られる。
+            # RUN の間は錨を打ち直せないので、観測の始まり（IDLE のここ）で打ち直す
+            st = self._ok(c, "STATUS")
+            if st.get("time_ok") not in ("1", "True", "true"):
+                log.warning("時刻を答えられない（%s）。錨を打ち直す", st.get("time_err", "-"))
+                self._ok(c, "ANCHOR")
             expect = {w.slot.key: (w.if_mhz, w.df_mhz) for w in plan.windows.values()}
             self.store = DiskDumps(os.path.join(self.cfg.tmp_dir, log_id), expect,
                                    int(round(self.tint_s * 1e9)))
