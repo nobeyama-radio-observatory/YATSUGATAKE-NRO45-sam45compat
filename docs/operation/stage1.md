@@ -34,9 +34,10 @@ SAM45 のロギングには手を入れない（読むだけ）。方式は [`..
 - [ ] Python 3.9 以上と numpy
 - [ ] このリポジトリを clone する:
   ```bash
-  git clone git@github.com:nobeyama-radio-observatory/YATSUGATAKE-NRO45-sam45compat.git
-  cd YATSUGATAKE-NRO45-sam45compat
-  git submodule update --init                   # YATSUGATAKE v1.4.0
+  # 公開リポジトリなので HTTPS で鍵なしで取れる（submodule の URL は SSH なので、HTTPS に読み替える）
+  git -c url."https://github.com/".insteadOf=git@github.com: \
+      clone --recurse-submodules https://github.com/nobeyama-radio-observatory/YATSUGATAKE-NRO45-sam45compat.git
+  cd YATSUGATAKE-NRO45-sam45compat              # external/YATSUGATAKE は v1.4.0
   PYTHONPATH=src python3 -m unittest discover -s tests    # 試験が通ること（ボードは要らない）
   ```
 - [ ] 一時ファイルの置き場所（`board.tmp_dir`）に空きがある。**10.24 ms で 8 窓は ≒ 46 GB/時**（観測が終わると消す）
@@ -78,7 +79,7 @@ PYTHONPATH=src python3 -m sam45compat.lc --config my.json 2>&1 | tee -a lc.log
 ### 観測中に見るもの
 
 - 暫定 LC のログ: 観測の始まりに「観測の始まり。肩代わり [...]、取らない {...}」。**取らない Array があれば理由を見る**
-- 通知（今はログに `通知:` で出る）: 分光計の準備の失敗・取らない Array・無効にした L2
+- 通知（今はログに `通知:` で出る）: 分光計の準備の失敗・取らない Array・分光計が時刻を失った（観測の途中、気づいた時点で 1 回）・無効にした L2
 - `.YKSP.` のロギングが積分ごとに伸びている
 - specd の `STATUS`（`miss`・`drop` が 0 のまま）。**暫定 LC が制御の口を使っている間（観測の始まり）は `ERR BUSY` になりうる**
 
