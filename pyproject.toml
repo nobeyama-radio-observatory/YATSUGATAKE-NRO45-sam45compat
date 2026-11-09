@@ -12,3 +12,7 @@ dependencies = ["numpy"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# external/YATSUGATAKE の中の test_*.py（単体で実行するスクリプト）を集めないようにする
+testpaths = ["tests"]
