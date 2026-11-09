@@ -124,6 +124,7 @@ class Session:
         self.done = False
         self.n_written = 0
         self.n_invalid = 0
+        self.notime_noted = False
 
     # ---- 1 周 ----
 
@@ -201,6 +202,7 @@ class Session:
                 break
             self.pending.pop(0)
             res = self.builder.integration(p.integ)
+            self._check_notime()
             if self.combined:
                 self._write(cb.merge_integration(p.integ.records, {r.array: r.record for r in res}))
             else:
@@ -210,6 +212,18 @@ class Session:
             for r in bad:
                 log.warning("%s: %s %s を無効にした: %s", self.name.log_id, p.integ.key[0],
                             sl.array_label(r.array), r.reason)
+
+    def _check_notime(self) -> None:
+        """観測の途中で分光計が時刻を失ったら、すぐ運用者に知らせる（観測に 1 回）。
+
+        specd は RUN の間は錨を打ち直せないので、この観測の残りの肩代わりは無効になる（次の観測の準備で打ち直す）。
+        観測の終わりの「無効にした L2」の通知だけでは遅いので、気づいた時点で知らせる。
+        """
+        n = getattr(self.builder.dumps, "n_notime", 0)
+        if n and not self.notime_noted:
+            self.notime_noted = True
+            self.notify(f"{self.name.log_id}: 分光計が時刻を失った（時刻の無いダンプ {n} 個）",
+                        "この観測の残りの肩代わりは idmy_flag = 1 になる。次の観測の準備で錨を打ち直す")
 
     def _finish(self) -> None:
         if self._out is None:          # L1 の前に ED（ありえないが）

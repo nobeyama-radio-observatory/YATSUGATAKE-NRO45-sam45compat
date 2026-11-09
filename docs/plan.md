@@ -81,4 +81,6 @@ sam45compat の残りの作業。方式と決めたことは [`design/standin-st
 YATSUGATAKE リポジトリの別のチャットで進める（2026-11-06 に引き継ぎ）。
 
 - [ ] SAM45-Wide/Fine を tint 10.24 ms で長時間運転する試験（だめなら 20.48 ms）
-- [ ] 使う YATSUGATAKE の版（タグ）と固定の方法を決め、[README](../README.md) の「使う YATSUGATAKE の版」に書く
+  - 2026-11-06 の V2-L（8 時間）: Fine は取りこぼし 0 だが、4 時間目に `time_ok` が落ちた（PPS の数とスタンプが 4 ビートずれ、以後 utc_ns 0）。Wide は ≒ 80 s でボードが落ちた（VCCINT 41.8 A・70.8 ℃ で上昇中）。どちらも未解決
+  - こちらの備え: 観測の準備で `time_ok` でなければ `ANCHOR` する（`board.py`）。観測の途中で時刻を失ったら、その観測の残りの肩代わりは `idmy_flag` = 1 になり、気づいた時点で 1 回知らせる（`lc.py`）（2026-11-09）
+- [x] 使う YATSUGATAKE の版（タグ）と固定の方法を決め、[README](../README.md) の「使う YATSUGATAKE の版」に書く → v1.4.0 を submodule で固定（2026-11-06）。v1.5.0（SpW8）は出ているが上げない

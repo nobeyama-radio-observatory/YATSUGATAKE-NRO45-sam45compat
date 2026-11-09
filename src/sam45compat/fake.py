@@ -19,6 +19,7 @@ class FakeDumps:
         self.level = level or {}
         self.asked: List[tuple] = []
         self.latest: Optional[int] = 2 ** 62     # None にすると「まだ届いていない」
+        self.n_notime = 0                        # 時刻の無いダンプの数（> 0 で「時刻を失った」）
 
     def interval(self, key: str, st_ns: int, ed_ns: int) -> Binned:
         self.asked.append((key, st_ns, ed_ns))

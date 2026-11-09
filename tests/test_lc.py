@@ -82,6 +82,18 @@ class TestLC(unittest.TestCase):
         self.assertEqual(n(), 8)
         lc.close()
 
+    def test_notifies_time_loss_once(self):
+        # 観測の途中で分光計が時刻を失ったら、観測の終わりを待たずに 1 回だけ知らせる
+        spec = FakeSpectrometer()
+        note = Notifier()
+        lc = lcm.LC(self.cfg, spec, note)
+        _write(self.sam, self.recs[:2 + 8])    # ZERO まで
+        lc.step(0.0)
+        self.assertEqual(note.sent, [])
+        spec.dumps().n_notime = 3
+        self._run_growing(lc)
+        self.assertEqual(sum("時刻を失った" in t for t in note.sent), 1)
+
     def test_prepare_failure_passes_through(self):
         note = Notifier()
         lc = lcm.LC(self.cfg, FakeSpectrometer(fail="ボードが応答しない"), note)
