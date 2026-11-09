@@ -39,6 +39,8 @@ sam45compat の残りの作業。方式と決めたことは [`design/standin-st
 
 ## 2. 段階 1（別のロギング・同じ IF・IFATT に従う・手でマージ）
 
+運用の手順は [`operation/stage1.md`](operation/stage1.md)（2026-11-06。手でマージする方法などは【未定】のまま）。
+
 - [x] **2-0. 土台**: YATSUGATAKE v1.4.0 を submodule で固定、`pyproject.toml`、`samlog.py`（ロギングの読み書き・追いかけ読み。サンプルをバイト単位で読み書きできることを試験で確認）（2026-11-06）
 
 - [ ] **2-1. specd の制御と記録**（`mapping.py`・`board.py`・`recorder.py` で済み。YATSUGATAKE の `specd.py --fake` を相手に、準備・記録・束ね・暫定 LC を通した。残りは実機で: 本物の時刻・LOAD・Wide。2026-11-06）: SAM45 の設定（L1 から読んだもの）を YATSUGATAKE の bit と SET に変換し（Wide と Fine が混ざるときは 250 MHz 以下だけ）、LOAD（bit が変わるときだけ）・SET・START する。10.24 ms のスペクトルを時刻付きで一時ファイルに記録する

@@ -72,7 +72,8 @@ SAM45 のうち **A05〜A08 と A21〜A24** が故障しました。これは IF
 | `docs/plan.md` | 残りの作業の一覧 |
 | `docs/cosmos/` | 既存の COSMOS・SAM45 の構成（最終版に引き継ぐ） |
 | `docs/design/` | 肩代わりの検討・決めたこと（この暫定の構成に固有） |
-| `docs/` のほか | 比較の試験（`comparison/`）・運用手順（`operation/`） |
+| `docs/operation/` | 運用の手順（[段階 1](docs/operation/stage1.md)） |
+| `docs/comparison/` | 比較の結果（段階 1 から） |
 | `src/sam45compat/` | 暫定 LC（Python 3.9 以上・numpy） |
 | `external/YATSUGATAKE/` | YATSUGATAKE（git submodule、版を固定） |
 | `config/` | 45m 固有の設定（Array の割り当てなど） |
