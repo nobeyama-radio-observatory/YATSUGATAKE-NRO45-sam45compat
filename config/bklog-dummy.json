@@ -1,0 +1,16 @@
+{
+  "_comment": "yk-c の試し: bklog の SAM45 のロギングの新規作成をきっかけに、YKSP だけのロギングをダミーのスペクトルで作る。--fake で起こす",
+  "watch": [
+    ["/cosmos3/45m/bklog/sam45psw", "/home/yk/bklog/yksppsw"],
+    ["/cosmos3/45m/bklog/sam45otf", "/home/yk/bklog/ykspotf"]
+  ],
+  "output": "separate",
+  "in_backend": "SAM45",
+  "in_prefix": "",
+  "out_backend": "YKSP",
+  "ifatt_mode": "follow",
+  "mirror": {"A05": "A01", "A06": "A02", "A07": "A03", "A08": "A04",
+             "A21": "A17", "A22": "A18", "A23": "A19", "A24": "A20"},
+  "poll_s": 1.0,
+  "skip_existing": true
+}

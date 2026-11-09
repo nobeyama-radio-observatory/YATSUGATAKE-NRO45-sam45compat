@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import ctypes as C
+import dataclasses
 import datetime as _dt
 import os
 import re
@@ -387,32 +388,47 @@ def mjdsec_to_unix_ns(sec: float) -> int:
 
 @dataclass(frozen=True)
 class LogName:
-    """'<ログ ID>.<装置>.<指示書名>.<group>.<project>'（装置は SAM45 / YKSP、段階 2 は頭に '_'）。"""
+    """ロギングのファイル名。形が 2 つある（装置は SAM45 / YKSP、段階 2 は頭に '_'）。
+
+    - id_first: '<ログ ID>.<装置>.<指示書名>.<group>.<project>'（初めのサンプルの名前）
+    - id_last:  '<装置>.<指示書名>.<group>.<project>.<ログ ID>'（L0 の中の名前。45m の bklog の
+      sam45psw・sam45otf のファイル名もこの形。2026-11-10 に確認）
+    書き出す名前は、読んだ名前と同じ形にする。
+    """
     log_id: str
     backend: str
     obs_file: str
     group: str
     project: str
     prefix: str = ""
+    id_last: bool = False
 
-    _RE = re.compile(r"(_?)(\d{14})\.([A-Za-z0-9]+)\.([^.]+)\.([^.]+)\.([^.]+)")
+    _RE_FIRST = re.compile(r"(_?)(\d{14})\.([A-Za-z0-9]+)\.([^.]+)\.([^.]+)\.([^.]+)")
+    _RE_LAST = re.compile(r"(_?)([A-Za-z][A-Za-z0-9]*)\.([^.]+)\.([^.]+)\.([^.]+)\.(\d{14})")
 
     @classmethod
     def parse(cls, name: str) -> "LogName":
-        m = cls._RE.fullmatch(os.path.basename(name))
-        if not m:
-            raise ValueError(f"ロギングのファイル名でない: {name!r}")
-        p, log_id, be, obs, grp, prj = m.groups()
-        return cls(log_id, be, obs, grp, prj, p)
+        base = os.path.basename(name)
+        m = cls._RE_FIRST.fullmatch(base)
+        if m:
+            p, log_id, be, obs, grp, prj = m.groups()
+            return cls(log_id, be, obs, grp, prj, p)
+        m = cls._RE_LAST.fullmatch(base)
+        if m:
+            p, be, obs, grp, prj, log_id = m.groups()
+            return cls(log_id, be, obs, grp, prj, p, id_last=True)
+        raise ValueError(f"ロギングのファイル名でない: {name!r}")
 
     def __str__(self) -> str:
+        if self.id_last:
+            return f"{self.prefix}{self.backend}.{self.obs_file}.{self.group}.{self.project}.{self.log_id}"
         return f"{self.prefix}{self.log_id}.{self.backend}.{self.obs_file}.{self.group}.{self.project}"
 
     def with_backend(self, backend: str) -> "LogName":
-        return LogName(self.log_id, backend, self.obs_file, self.group, self.project, self.prefix)
+        return dataclasses.replace(self, backend=backend)
 
     def with_prefix(self, prefix: str) -> "LogName":
-        return LogName(self.log_id, self.backend, self.obs_file, self.group, self.project, prefix)
+        return dataclasses.replace(self, prefix=prefix)
 
 
 def summary(records: List[Record]) -> Tuple[int, int, bool]:

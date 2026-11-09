@@ -128,6 +128,53 @@ class TestLC(unittest.TestCase):
         self.assertEqual(cfg.ifatt_mode, "follow")
 
 
+class TestBklogLayout(unittest.TestCase):
+    """45m の bklog の形: 名前は '<装置>.<指示書>.<group>.<project>.<ログ ID>'、PSW と OTF で置き場所が分かれる。"""
+
+    def test_name_id_last(self):
+        n = sl.LogName.parse("SAM45.nmlh40.csv26.squint.20261108213141")
+        self.assertEqual((n.log_id, n.backend, n.obs_file, n.group, n.project, n.id_last),
+                         ("20261108213141", "SAM45", "nmlh40", "csv26", "squint", True))
+        self.assertEqual(str(n.with_backend("YKSP")), "YKSP.nmlh40.csv26.squint.20261108213141")
+        self.assertEqual(str(n.with_prefix("_")), "_SAM45.nmlh40.csv26.squint.20261108213141")
+        self.assertEqual(sl.LogName.parse("_SAM45.a.b.c.20261108213141").prefix, "_")
+        self.assertFalse(sl.LogName.parse(NAME).id_last)
+        with self.assertRaises(ValueError):
+            sl.LogName.parse("SAM45.nmlh40.csv26.squint.2026110821314")
+
+    def test_two_dirs_and_mirror(self):
+        with tempfile.TemporaryDirectory() as d:
+            dirs = {k: os.path.join(d, k) for k in ("sam45psw", "sam45otf", "yksppsw", "ykspotf")}
+            for k in ("sam45psw", "sam45otf"):
+                os.makedirs(dirs[k])
+            cfg = lcm.LcConfig(watch=[[dirs["sam45psw"], dirs["yksppsw"]], [dirs["sam45otf"], dirs["ykspotf"]]],
+                               mirror={"A05": "A01", "A06": "A02", "A07": "A03", "A08": "A04"})
+            lc = lcm.LC(cfg, FakeSpectrometer())
+            # 観測者は A01〜A04 だけを使う（A05〜A08 は故障）
+            recs = _sam45_records(_obs(arrays=range(4)), range(4))
+            _write(os.path.join(dirs["sam45otf"], "SAM45.otfobs.grp.prj.20261110000001"), recs)
+            with open(os.path.join(dirs["sam45psw"], "README"), "w") as f:
+                f.write("x")                                   # ロギングでない名前は見ない
+            lc.step(0.0)
+            lc.step(0.0)
+            self.assertEqual(os.listdir(d) and sorted(os.listdir(dirs["ykspotf"])),
+                             ["YKSP.otfobs.grp.prj.20261110000001"])
+            self.assertFalse(os.path.exists(dirs["yksppsw"]))
+            out = sl.read_file(os.path.join(dirs["ykspotf"], "YKSP.otfobs.grp.prj.20261110000001"))
+            self.assertEqual([r.kind for r in out], ["L0", "L1"] + ["L2"] * 16 + ["ED"])
+            self.assertEqual([i for i in range(32) if out[1].s.iary_usefg[i]], [4, 5, 6, 7])
+            self.assertEqual(out[1].s.dbebw[4], 32e6)
+            self.assertTrue(all(r.s.idmy_flag == 0 for r in out if r.kind == "L2"))
+            self.assertEqual(lc.sessions, {})
+
+    def test_unreadable_dir_does_not_stop(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = lcm.LcConfig(watch=[[os.path.join(d, "none"), os.path.join(d, "out")]])
+            lc = lcm.LC(cfg, FakeSpectrometer())
+            lc.step(0.0)                                       # 置き場所が無くても落ちない
+            self.assertEqual(lc.sessions, {})
+
+
 @unittest.skipUnless(SAMPLE, "SAM45_SAMPLE が無い")
 class TestReplaySample(unittest.TestCase):
     def test_replay_through_lc(self):

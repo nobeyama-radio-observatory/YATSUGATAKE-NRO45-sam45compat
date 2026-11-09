@@ -19,6 +19,7 @@ SAM45 のロギングの置き場所を見回り、観測ごとに:
 from __future__ import annotations
 
 import argparse
+import ctypes as C
 import json
 import logging
 import os
@@ -49,8 +50,11 @@ class Spectrometer(Protocol):
 
 @dataclass
 class LcConfig:
-    log_dir: str                                  # SAM45 のロギングの置き場所
+    log_dir: str = ""                             # SAM45 のロギングの置き場所
     out_dir: Optional[str] = None                 # YKSP のロギングの置き場所（既定は log_dir）
+    # 置き場所が複数のとき: [[SAM45 の置き場所, YKSP の置き場所], ...]（45m の bklog は sam45psw・sam45otf に分かれる）。
+    # 指定すると log_dir・out_dir は使わない
+    watch: Optional[List[List[str]]] = None
     output: str = "separate"                      # "separate"（段階 1・1.5）/ "combined"（段階 2）
     in_backend: str = "SAM45"
     in_prefix: str = ""                           # 段階 2 では "_"
@@ -72,12 +76,17 @@ class LcConfig:
     heartbeat_path: Optional[str] = None          # 段階 2: 心拍のファイル（見張りが見る）
     heartbeat_s: float = 2.0
     hang_s: float = 180.0                         # 本体の 1 周がこれより長く止まったら心拍を止める（LOAD の待ちより長く）
+    # 試験用: L1 で使われていない肩代わりの Array を、ほかの Array の設定で埋める（{"A05": "A01", ...}）。
+    # 故障した Array を観測者が使わない今の観測でも、YKSP のロギングを作って流れを確かめるため。本番では空にする
+    mirror: Dict[str, str] = field(default_factory=dict)
     board: Dict[str, object] = field(default_factory=dict)   # board.BoardConfig の欄（host・ctl_port・data_port・bits・tmp_dir など）
 
     @classmethod
     def from_json(cls, path: str) -> "LcConfig":
         with open(path) as f:
-            d = json.load(f)
+            d = {k: v for k, v in json.load(f).items() if not k.startswith("_")}   # "_comment" などは注釈
+        if "watch" in d and d["watch"] is not None:
+            d["watch"] = [list(x) for x in d["watch"]]
         if "assign" in d:
             d["assign"] = {k: mp.Slot(v[0], int(v[1])) for k, v in d["assign"].items()}
         return cls(**d)
@@ -99,7 +108,8 @@ class TakenOver(Exception):
 class Session:
     """1 つの観測（SAM45 のロギング 1 ファイル）。"""
 
-    def __init__(self, path: str, cfg: LcConfig, spec: Spectrometer, notify: Notifier):
+    def __init__(self, path: str, cfg: LcConfig, spec: Spectrometer, notify: Notifier,
+                 out_dir: Optional[str] = None):
         self.path = path
         self.name = sl.LogName.parse(path)
         self.cfg = cfg
@@ -115,7 +125,7 @@ class Session:
         self.combined = cfg.output == "combined"
         out_name = self.name.with_prefix("") if self.combined else \
             self.name.with_backend(cfg.out_backend).with_prefix("")
-        self.out_path = os.path.join(cfg.out_dir or cfg.log_dir, str(out_name))
+        self.out_path = os.path.join(out_dir or cfg.out_dir or cfg.log_dir, str(out_name))
         if os.path.abspath(self.out_path) == os.path.abspath(path):
             raise ValueError(f"出力が入力と同じ名前: {path}（combined なら in_prefix を '_' に）")
         self.marker = self.out_path + MARKER_SUFFIX
@@ -166,6 +176,8 @@ class Session:
     def _start(self, ctl: sl.Record, obs: sl.Record) -> None:
         cfg = self.cfg
         self.n_used = sum(obs.s.iary_usefg)
+        if cfg.mirror:
+            obs = mirror_arrays(obs, cfg.mirror)
         ifm = mp.Sam45IfModel(cfg.sam45_if_ascending, cfg.sam45_k_offset)
         plan = mp.plan(obs.s, cfg.assign, ifm, cfg.shift)
         targets = sorted(set(plan.windows) | set(plan.skipped))
@@ -259,6 +271,28 @@ class Session:
             self._out = None
 
 
+def mirror_arrays(obs: sl.Record, mirror: Dict[str, str]) -> sl.Record:
+    """試験用: L1 で使われていない Array（鍵）を、使われている Array（値）の設定で埋めた L1 の写し。"""
+    obs = sl.copy_record(obs)
+    o = obs.s
+    done = []
+    for dst_name, src_name in sorted(mirror.items()):
+        dst, src = sl.array_index(dst_name), sl.array_index(src_name)
+        if o.iary_usefg[dst] or not o.iary_usefg[src]:
+            continue
+        for fname, ftype in type(o)._fields_:
+            arr = getattr(o, fname)
+            if isinstance(arr, C.Array) and len(arr) == sl.ARYMAX:
+                n = C.sizeof(arr) // sl.ARYMAX
+                base = C.addressof(arr)
+                C.memmove(base + dst * n, base + src * n, n)
+        o.iary_num += 1
+        done.append(f"{dst_name}←{src_name}")
+    if done:
+        log.warning("試験: 使われていない Array を写した設定で埋めた: %s", " ".join(done))
+    return obs
+
+
 class LC:
     """置き場所を見回り、観測ごとに Session を回す。"""
 
@@ -267,6 +301,7 @@ class LC:
         self.spec = spec
         self.notify = notify or Notifier()
         self.sessions: Dict[str, Session] = {}
+        self._unreadable = set()
         self.seen = set(self._candidates()) if cfg.skip_existing else set()
         self._last_loop = time.monotonic()
         self._hb_stop = threading.Event()
@@ -286,24 +321,44 @@ class LC:
             except OSError as e:
                 log.error("心拍を書けない: %s", e)
 
-    def _candidates(self) -> List[str]:
-        out = []
-        for n in os.listdir(self.cfg.log_dir):
+    def _dirs(self) -> List[tuple]:
+        if self.cfg.watch:
+            return [(i, o) for i, o in self.cfg.watch]
+        return [(self.cfg.log_dir, self.cfg.out_dir or self.cfg.log_dir)]
+
+    def _candidates(self) -> Dict[str, str]:
+        """{SAM45 のロギングのパス: YKSP の置き場所}。置き場所を読めなければ（NFS の一時の不調）、その回は飛ばす。"""
+        out = {}
+        for in_dir, out_dir in self._dirs():
             try:
-                name = sl.LogName.parse(n)
-            except ValueError:
+                names = os.listdir(in_dir)
+            except OSError as e:
+                if in_dir not in self._unreadable:
+                    log.error("置き場所を読めない: %s（%s）", in_dir, e)
+                    self._unreadable.add(in_dir)
                 continue
-            if name.backend == self.cfg.in_backend and name.prefix == self.cfg.in_prefix:
-                out.append(n)
-        return sorted(out)
+            self._unreadable.discard(in_dir)
+            for n in names:
+                try:
+                    name = sl.LogName.parse(n)
+                except ValueError:
+                    continue
+                if name.backend == self.cfg.in_backend and name.prefix == self.cfg.in_prefix:
+                    out[os.path.join(in_dir, n)] = out_dir
+        return dict(sorted(out.items()))
 
     def step(self, now: Optional[float] = None) -> None:
         self._last_loop = time.monotonic()
-        for n in self._candidates():
-            if n not in self.seen:
-                self.seen.add(n)
-                self.sessions[n] = Session(os.path.join(self.cfg.log_dir, n), self.cfg,
-                                           self.spec, self.notify)
+        for path, out_dir in self._candidates().items():
+            if path not in self.seen:
+                self.seen.add(path)
+                log.info("新しいロギング: %s → %s", path, out_dir)
+                try:
+                    os.makedirs(out_dir, exist_ok=True)
+                    self.sessions[path] = Session(path, self.cfg, self.spec, self.notify, out_dir)
+                except Exception as e:
+                    log.exception("%s を扱えない", path)
+                    self.notify(f"{os.path.basename(path)}: 暫定 LC が扱えない", repr(e))
         for n, s in list(self.sessions.items()):
             try:
                 s.step(now)

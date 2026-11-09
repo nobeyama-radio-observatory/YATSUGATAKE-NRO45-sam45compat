@@ -14,6 +14,7 @@ L0・L1 をまず書き、L2 は積分ごとに、積分の時刻の差を --spe
 """
 
 import argparse
+import dataclasses
 import os
 import sys
 import time
@@ -65,7 +66,7 @@ def replay(src: str, dst_dir: str, speed: float = 60.0, prefix: str = "", log_id
             log_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     name = sl.LogName.parse(src).with_prefix(prefix)
     if log_id:
-        name = sl.LogName(log_id, name.backend, name.obs_file, name.group, name.project, prefix)
+        name = dataclasses.replace(name, log_id=log_id, prefix=prefix)
     out = os.path.join(dst_dir, str(name))
     t_prev = None
     with open(out, "wb") as f:
