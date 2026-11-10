@@ -6,6 +6,7 @@ SAM45 のロギングの置き場所を見回り、観測ごとに:
 2. YKSP のロギング（ファイル名の装置を YKSP にしたもの）に L0・L1 を書く
 3. SAM45 の L2 を積分ごとにまとめ、ダンプが届いたら束ねて YKSP の L2 を書く
 4. ED を読んだら、残りを書いて ED を書き、分光計を終える
+5. deliver_root があれば、別スレッドでマージし、観測生データと YKSP のロギングを配信の置き場所に移す（deliver.py）
 
 出力は設定の output で選ぶ:
 - "separate"（使うのはこちら）: YKSP のロギングを別のファイルに書く。肩代わりする Array だけの L1。
@@ -31,6 +32,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Protocol
 
 from . import combine as cb
+from . import deliver as dv
 from . import mapping as mp
 from . import samlog as sl
 from . import yksp as yk
@@ -54,7 +56,8 @@ class Spectrometer(Protocol):
 class LcConfig:
     log_dir: str = ""                             # SAM45 のロギングの置き場所
     out_dir: Optional[str] = None                 # YKSP のロギングの置き場所（既定は log_dir）
-    # 置き場所が複数のとき: [[SAM45 の置き場所, YKSP の置き場所], ...]（45m の bklog は sam45psw・sam45otf に分かれる）。
+    # 置き場所が複数のとき: [[SAM45 の置き場所, YKSP の置き場所, 種類], ...]（45m の bklog は sam45psw・sam45otf に分かれる）。
+    # 種類（"psw" / "otf"）は配信の置き場所の分け方。省くと SAM45 の置き場所の名前の末尾から決める。
     # 指定すると log_dir・out_dir は使わない
     watch: Optional[List[List[str]]] = None
     output: str = "separate"                      # "separate" / "combined"（合体。2026-11-10 にやめた）
@@ -83,6 +86,11 @@ class LcConfig:
     # 本番では空にする（SAM45 は肩代わりの Array も L1 に設定を書く。2026-11-10）
     mirror: Dict[str, str] = field(default_factory=dict)
     board: Dict[str, object] = field(default_factory=dict)   # board.BoardConfig の欄（host・ctl_port・data_port・bits・tmp_dir など）
+    # 観測の後の処理（deliver.py）。None なら移さない（YKSP のロギングは out_dir に残る）。45m では /srv/download
+    deliver_root: Optional[str] = None
+    # マージの命令（引数の並び。{logging} {outdir} {kind} {log_id} {group} {project} を差し込む）。None ならマージを飛ばす
+    merge_cmd: Optional[List[str]] = None
+    merge_timeout_s: float = 3600.0
 
     @classmethod
     def from_json(cls, path: str) -> "LcConfig":
@@ -112,8 +120,11 @@ class Session:
     """1 つの観測（SAM45 のロギング 1 ファイル）。"""
 
     def __init__(self, path: str, cfg: LcConfig, spec: Spectrometer, notify: Notifier,
-                 out_dir: Optional[str] = None):
+                 out_dir: Optional[str] = None, kind: Optional[str] = None,
+                 deliverer: Optional[dv.Deliverer] = None):
         self.path = path
+        self.kind = kind
+        self.deliverer = deliverer
         self.name = sl.LogName.parse(path)
         self.cfg = cfg
         self.spec = spec
@@ -256,6 +267,8 @@ class Session:
             self.notify(f"{self.name.log_id}: 無効にした L2 が {self.n_invalid} 個", self.out_path)
         log.info("%s: 観測の終わり。L2 %d 個（無効 %d）→ %s", self.name.log_id,
                  self.n_written, self.n_invalid, self.out_path)
+        if self.deliverer is not None and not self.combined:
+            self.deliverer.submit(dv.Job(self.out_path, self.kind))
 
     def _check_marker(self) -> None:
         if os.path.exists(self.marker):
@@ -307,6 +320,14 @@ class LC:
         self._unreadable = set()
         self._primed = set()            # 一度でも読めた置き場所（skip_existing の「既にある」を決めた）
         self.seen = set()
+        self.deliverer: Optional[dv.Deliverer] = None
+        if cfg.deliver_root:
+            if cfg.output != "separate":
+                raise ValueError("deliver_root は output が separate のときだけ")
+            for in_dir, _, kind in self._dirs():
+                if kind not in dv.KINDS:
+                    raise ValueError(f"{in_dir}: 種類（psw / otf）を決められない。watch の 3 つ目に書く")
+            self.deliverer = dv.Deliverer(cfg.deliver_root, cfg.merge_cmd, self.notify, cfg.merge_timeout_s)
         self._candidates()
         self._last_loop = time.monotonic()
         self._hb_stop = threading.Event()
@@ -327,14 +348,15 @@ class LC:
                 log.error("心拍を書けない: %s", e)
 
     def _dirs(self) -> List[tuple]:
+        """[(SAM45 の置き場所, YKSP の置き場所, 種類 psw / otf / None)]。"""
         if self.cfg.watch:
-            return [(i, o) for i, o in self.cfg.watch]
-        return [(self.cfg.log_dir, self.cfg.out_dir or self.cfg.log_dir)]
+            return [(w[0], w[1], w[2] if len(w) > 2 else dv.kind_of(w[0])) for w in self.cfg.watch]
+        return [(self.cfg.log_dir, self.cfg.out_dir or self.cfg.log_dir, dv.kind_of(self.cfg.log_dir))]
 
-    def _candidates(self) -> Dict[str, str]:
-        """{SAM45 のロギングのパス: YKSP の置き場所}。置き場所を読めなければ（NFS の一時の不調）、その回は飛ばす。"""
+    def _candidates(self) -> Dict[str, tuple]:
+        """{SAM45 のロギングのパス: (YKSP の置き場所, 種類)}。置き場所を読めなければ（NFS の一時の不調）、その回は飛ばす。"""
         out = {}
-        for in_dir, out_dir in self._dirs():
+        for in_dir, out_dir, kind in self._dirs():
             try:
                 names = os.listdir(in_dir)
             except OSError as e:
@@ -358,18 +380,19 @@ class LC:
                     self.seen.update(found)
                     log.info("置き場所を読めた: %s（既にある %d 個は扱わない）", in_dir, len(found))
             for path in found:
-                out[path] = out_dir
+                out[path] = (out_dir, kind)
         return dict(sorted(out.items()))
 
     def step(self, now: Optional[float] = None) -> None:
         self._last_loop = time.monotonic()
-        for path, out_dir in self._candidates().items():
+        for path, (out_dir, kind) in self._candidates().items():
             if path not in self.seen:
                 self.seen.add(path)
                 log.info("新しいロギング: %s → %s", path, out_dir)
                 try:
                     os.makedirs(out_dir, exist_ok=True)
-                    self.sessions[path] = Session(path, self.cfg, self.spec, self.notify, out_dir)
+                    self.sessions[path] = Session(path, self.cfg, self.spec, self.notify, out_dir,
+                                                  kind, self.deliverer)
                 except Exception as e:
                     log.exception("%s を扱えない", path)
                     self.notify(f"{os.path.basename(path)}: 暫定 LC が扱えない", repr(e))
@@ -390,6 +413,8 @@ class LC:
         self._hb_stop.set()
         for s in self.sessions.values():
             s.close()
+        if self.deliverer is not None:
+            self.deliverer.close()
 
     def run(self) -> None:
         while True:

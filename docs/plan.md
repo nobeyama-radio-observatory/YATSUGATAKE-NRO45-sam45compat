@@ -80,7 +80,7 @@ sam45compat の残りの作業。方式と決めたことは [`design/standin-st
 
 方式は [`design/data-delivery.md`](design/data-delivery.md)（2026-11-10。Apache の LDAP 認証とフォルダの一覧）。所内 LAN からだけ、`<group>` = LDAP のアカウント名で、自分の `<group>` の下の `<project>` を全部見られる。
 
-- [ ] **5-1. ストレージへ移す**（`lc.py`）: YKSP のロギングを一時置き場（`/home/yk/bklog`）に書き、ED を書いたらストレージに移してからマージを起動する。観測生データは `<ストレージ>/<group>/<project>/` に置く（パスは決める）
+- [ ] **5-1. ストレージへ移す**（`deliver.py`・`lc.py` で済み。設定の `deliver_root`。2026-11-10）: ED を書いたら別スレッドで、マージ（`merge_cmd`）の出力を `/srv/download/<group>/<project>/otf/` または `psw/` に、YKSP のロギングを `logging/` に移す。残りはマージの命令を書くこと（ソフトの到着待ち）と、本番機で `/srv/download` をストレージに置くこと
 - [ ] **5-2. 配信の口**: Apache の LDAP 認証で、ログインした名前と同じ `<group>` だけを通す。HTTPS、ダウンロード用の NIC・所内 LAN からだけ、速さの制限と低い優先度。ほかの `<group>` を見られないことを試験する（仮機で HTTPS・LDAP・`<group>` の制限と試験まで済み。[`tools/apache/yksp-download.conf`](../tools/apache/yksp-download.conf)、[`operation/server-setup-provisional.md`](operation/server-setup-provisional.md) の 5.2。残りは速さの制限・優先度・ファイアウォール、本番機への移し替え。2026-11-10）
 - [ ] **5-3. 検索**: まずはフォルダの一覧とファイル名で観測者に試してもらい、足りなければ L1 から作った一覧で検索するページを足す
 - [ ] **5-4. 1 年を過ぎたものを消す**（自動か手か、ロギングも同じ期間か）

@@ -1,8 +1,8 @@
 {
-  "_comment": "45m の本番: bklog の SAM45 のロギングを読み、/home/yk/bklog の下に YKSP のロギングを書く（docs/design/standin-study.md の「方針の見直し」）。board.host・board.bits は実機に合わせる",
+  "_comment": "45m の本番: bklog の SAM45 のロギングを読み、/home/yk/bklog の下に YKSP のロギングを書く（docs/design/standin-study.md の「方針の見直し」）。board.host・board.bits は実機に合わせる。観測の後、YKSP のロギング（とマージの出力）を /srv/download/<group>/<project>/ の logging/・psw/・otf/ に移す。merge_cmd はマージのソフトが届いたら書く",
   "watch": [
-    ["/cosmos3/45m/bklog/sam45psw", "/home/yk/bklog/yksppsw"],
-    ["/cosmos3/45m/bklog/sam45otf", "/home/yk/bklog/ykspotf"]
+    ["/cosmos3/45m/bklog/sam45psw", "/home/yk/bklog/yksppsw", "psw"],
+    ["/cosmos3/45m/bklog/sam45otf", "/home/yk/bklog/ykspotf", "otf"]
   ],
   "output": "separate",
   "in_backend": "SAM45",
@@ -23,6 +23,9 @@
   "ready_margin_s": 0.05,
   "ready_timeout_s": 5.0,
   "skip_existing": true,
+  "deliver_root": "/srv/download",
+  "merge_cmd": null,
+  "merge_timeout_s": 3600.0,
   "board": {
     "host": "$B",
     "ctl_port": 51000,

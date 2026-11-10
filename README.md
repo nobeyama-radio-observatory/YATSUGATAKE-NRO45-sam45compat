@@ -107,7 +107,8 @@ python3 tools/replay.py <SAM45 のロギング> <log_dir> --speed 60 --log-id 20
 
 暫定 LC は `log_dir` に新しくできた SAM45 のロギングを追いかけ、`out_dir`（既定は同じ場所）に YKSP のロギングを書く。
 45m の本番では、bklog を読み `/home/yk/bklog` の下に書く（`config/bklog.json`。ボードなしの試しは `config/bklog-dummy.json` と `--fake`）。
-観測が終わったら、別に提供されるマージを起動して観測生データ（YKSP）を作る予定（未実装。マージのソフトの到着待ち）。
+観測が終わったら、別に提供されるマージを起動して観測生データ（YKSP）を作り、YKSP のロギングとともに
+`/srv/download/<group>/<project>/` の `otf/`・`psw/`・`logging/` に移す（設定の `deliver_root`・`merge_cmd`。マージの命令はソフトの到着待ち）。
 `--fake` を外すと、設定の `board`（specd の宛先・ポート・bit の名前・一時ファイルの置き場所）の実機につなぐ。
 ボードが無くても、YATSUGATAKE の specd を PL なしで起こせば相手にできる（試験 `tests/test_board.py` もこれを使う）:
 

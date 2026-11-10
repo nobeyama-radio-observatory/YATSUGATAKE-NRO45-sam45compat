@@ -24,7 +24,15 @@
 
 仮機で動くことを確かめた（[`../operation/server-setup-provisional.md`](../operation/server-setup-provisional.md) の 5.2）。設定のひな形は [`tools/apache/yksp-download.conf`](../../tools/apache/yksp-download.conf)。
 
-- 観測生データ（YKSP）を `<ストレージ>/<group>/<project>/<ファイル>` に置く
+- 置き場所は **`/srv/download`**（ストレージのディスク）。その下を次の形にする（2026-11-10）:
+
+  | 中身 | 置き場所 |
+  |---|---|
+  | 観測生データ（マージの出力）の OTF | `/srv/download/<group>/<project>/otf/` |
+  | 観測生データ（マージの出力）の PSW | `/srv/download/<group>/<project>/psw/` |
+  | YKSP のロギング | `/srv/download/<group>/<project>/logging/` |
+
+  `<group>` は LDAP のアカウント名（ユーザー ID）。OTF か PSW かは、どの bklog（`sam45otf/`・`sam45psw/`）から来たかで決める
 - Apache の `mod_authnz_ldap` で LDAP にログインさせ、**`<group>` とログインした名前が同じときだけ**通す
   （`<DirectoryMatch "^<ストレージ>/(?<grp>[^/]+)">` ＋ `Require expr "%{REMOTE_USER} == %{env:MATCH_GRP}"`）。
   URL ではなくファイルの実際の場所で判定し、`%2e%2e`・`//` などの書き方で回り込ませない。頭の一覧（ほかの `<group>` の名前）は見せない
@@ -65,13 +73,22 @@
 ## データの流れ
 
 1. 暫定 LC が YKSP のロギングを**一時置き場**（`/home/yk/bklog`）に書く（観測中に追記）
-2. ED を書いたら、YKSP のロギングを**ストレージ**に移す
-3. マージを起動し、観測生データ（YKSP）をストレージの `<group>/<project>/` に書く
-4. 1 年を過ぎたものを消す（ロギングも同じ期間でよいかは決める）
+2. ED を書いたら、別スレッドで（見回りを止めずに）マージを起動する。マージには一時置き場のロギングを渡し、出力は一時置き場の空のフォルダに書かせる
+3. マージの出力を `/srv/download/<group>/<project>/otf/` または `psw/` に移す
+4. YKSP のロギングを `/srv/download/<group>/<project>/logging/` に移す。**マージに失敗しても移す**（運用者に知らせ、後から手でやり直せるように）
+5. 1 年を過ぎたものを消す（ロギングも同じ期間でよいかは決める）
+
+実装は `src/sam45compat/deliver.py`（設定の `deliver_root`・`merge_cmd`、2026-11-10）。
+
+- 別のディスクへは、写して（`.<名前>.part`）から名前を付け替える。途中のファイルを Apache から見せない
+- 移した先に同じ名前があれば上書きせず、元を一時置き場に残して知らせる
+- ファイルは 0644、フォルダは 0755（Apache の利用者が読む）
+- `merge_cmd` はマージのソフトが届いたら書く（引数の並び。`{logging}`・`{outdir}`・`{kind}`・`{log_id}`・`{group}`・`{project}` を差し込む）。それまでは `null` で、ロギングだけ移す
+- 暫定 LC を止めると、待っていた分は一時置き場に残る。手で: `python3 -m sam45compat.deliver <YKSP のロギング> --kind psw --root /srv/download [--merge-cmd ...]`
 
 ## 未確認のこと
 
-- [ ] ストレージのマウント先と、その中の置き方（観測生データの `<group>/<project>/`、移した YKSP のロギング）
+- [ ] ストレージを `/srv/download` にマウントするか（ストレージの別の場所を `/srv/download` にするか）
 - [ ] 1 年を過ぎたものの消し方（自動か手か）、ロギング（YKSP）も 1 年でよいか、バックアップは要るか
 - [ ] `<group>` と LDAP のアカウント名が合わない例（大文字・小文字、記号など）は無いか（比較は大文字・小文字を区別する。入れないだけで、他人のものは見えない）
 - [ ] ダウンロードの速さの制限の値と、Apache の優先度
