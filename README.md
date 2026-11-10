@@ -2,7 +2,8 @@
 
 野辺山 45m 鏡の分光計 SAM45 のうち、**故障した Array を
 [YATSUGATAKE](https://github.com/nobeyama-radio-observatory/YATSUGATAKE) で肩代わり**するためのソフトウェアです。
-YATSUGATAKE に SAM45 を模倣させ、観測者からは SAM45 が故障していないように見せます。
+YATSUGATAKE に SAM45 を模倣させ、SAM45 のロギングから設定と時刻を受け取って SAM45 と同じ形式のロギング（YKSP）を書き、
+観測が終わったらマージして、SAM45 とは別の観測生データ（YKSP）を作ります。
 
 > **これは暫定のリポジトリです。**
 > SAM45 が廃止され、45m の分光計が YATSUGATAKE に一本化された時点で役目を終え、archive します。
@@ -10,7 +11,8 @@ YATSUGATAKE に SAM45 を模倣させ、観測者からは SAM45 が故障して
 > ここのコードを最終版の土台にすることは想定していません。
 >
 > English: Temporary software that lets YATSUGATAKE stand in for the failed arrays of the SAM45
-> spectrometer at the Nobeyama 45 m telescope, so that observers see an intact SAM45.
+> spectrometer at the Nobeyama 45 m telescope. It follows the SAM45 logging and writes the stand-in
+> arrays as a separate SAM45-format logging (YKSP), which is merged into a separate raw data file.
 > To be archived once SAM45 is retired.
 
 ## 目的
@@ -19,7 +21,8 @@ SAM45 は 16 の IF 入力を持ち、各入力を **Array**（A01〜A16）と�
 1 つの IF 入力には窓（SpW）を最大 2 つ設定でき、2 つ目の窓は A17〜A32 として扱われます（A_n の 2 つ目の窓が A_(n+16)）。
 
 SAM45 のうち **A05〜A08 と A21〜A24** が故障しました。これは IF 入力 4 本ぶん（A05〜A08）の、1 つ目と 2 つ目の窓にあたります。
-この 4 本の IF を YATSUGATAKE の RFSoC 1 台で分光し、SAM45 の出力として見せます。
+この 4 本の IF を YATSUGATAKE の RFSoC 1 台で分光します。
+YATSUGATAKE が書く Array は、将来ほかにも足すかもしれません（2026-11-10）。
 
 | SAM45 の Array | IF 入力 | 窓 | YATSUGATAKE（案） |
 |---|---|---|---|
@@ -36,8 +39,8 @@ SAM45 のうち **A05〜A08 と A21〜A24** が故障しました。これは IF
 |---|---|
 | ボード | RFSoC 4x2 を **1 台**（ADC 4 本 = IF 入力 4 本） |
 | bit | **SAM45-Wide**・**SAM45-Fine** のみ（どちらも ADC 4 本 × 窓 2 つまで、4096 ch） |
-| 肩代わりする Array | A05〜A08、A21〜A24 |
-| 観測者から見えるもの | 故障していない SAM45（観測指示書・観測生データは今までどおり） |
+| 肩代わりする Array | A05〜A08、A21〜A24（将来、足すかもしれない） |
+| 観測者から見えるもの | 観測指示書は今までどおり。観測生データは SAM45 と YKSP の 2 つ |
 | 観測システム | 既存の COSMOS（改修は最小限） |
 
 上の条件から外れる使い方（ボードを複数台にする、ほかの bit を使う、ほかの Array を肩代わりするなど）は、
@@ -47,7 +50,7 @@ SAM45 のうち **A05〜A08 と A21〜A24** が故障しました。これは IF
 
 1. **スピードを最優先する。** SAM45 はすでに故障しているので、できるだけ早く実装を終える。
    YATSUGATAKE に最適化した作りは最終版で行う。COSMOS のマネージャーは改修しない（再コンパイルが要りリスクがあるため）。
-2. **観測者の手順の変更を最小にする。** 観測生データの形は変えない。
+2. **観測者の手順の変更を最小にする。** SAM45 の観測生データの形は変えない。A05〜A08・A21〜A24 は別の観測生データ（YKSP）にする。
    観測指示書に変換スクリプトをかける程度の変更は許容する。
 3. **YATSUGATAKE には公開 API だけで触れる。** コアの内部（レジスタ・内部モジュール）に直接触らない。
    必要な機能が足りないときは、**45m 固有でない汎用の機能として**コア側に追加する。
@@ -102,7 +105,9 @@ PYTHONPATH=src python3 -m sam45compat.lc --config my.json --fake
 python3 tools/replay.py <SAM45 のロギング> <log_dir> --speed 60 --log-id 20261106130000
 ```
 
-暫定 LC は `log_dir` に新しくできた SAM45 のロギングを追いかけ、同じ場所に `.YKSP.` のロギングを書く。
+暫定 LC は `log_dir` に新しくできた SAM45 のロギングを追いかけ、`out_dir`（既定は同じ場所）に YKSP のロギングを書く。
+45m の本番では、bklog を読み `/home/yk/bklog` の下に書く（`config/bklog-dummy.json` の `watch`）。
+観測が終わったら、別に提供されるマージを起動して観測生データ（YKSP）を作る予定（未実装。マージのソフトの到着待ち）。
 `--fake` を外すと、設定の `board`（specd の宛先・ポート・bit の名前・一時ファイルの置き場所）の実機につなぐ。
 ボードが無くても、YATSUGATAKE の specd を PL なしで起こせば相手にできる（試験 `tests/test_board.py` もこれを使う）:
 
@@ -113,11 +118,13 @@ python3 tools/replay.py <SAM45 のロギング> <log_dir> --speed 60 --log-id 20
 ### 段階 1 の比較
 
 ```bash
-# SAM45（A01〜A04）と YKSP（A05〜A08）を比べる。合体したロギングなら同じファイルを 2 回
+# SAM45（A01〜A04）と YKSP（A05〜A08）を比べる
 PYTHONPATH=src python3 -m sam45compat.compare <SAM45 のロギング> <YKSP のロギング> --npz cmp.npz
 ```
 
-### 段階 1.1・2
+### 合体（2026-11-10 にやめた。運用には入れない）
+
+別の観測生データ（YKSP）にする方針になったので、次は使わない（`docs/design/standin-study.md` の「段階 2 の合体（やめた）」）。
 
 ```bash
 # 段階 1.1: 記録済みの SAM45 と YKSP のロギングを合体する（手でマージする前に）
