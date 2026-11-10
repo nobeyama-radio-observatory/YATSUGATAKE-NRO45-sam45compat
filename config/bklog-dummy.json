@@ -1,5 +1,5 @@
 {
-  "_comment": "yk-c の試し: bklog の SAM45 のロギングの新規作成をきっかけに、YKSP だけのロギングをダミーのスペクトルで作る。--fake で起こす。本番は config/bklog.json（mirror なし）",
+  "_comment": "yk-c の試し: bklog の SAM45 のロギングの新規作成をきっかけに、YKSP だけのロギングをダミーのスペクトルで作る。--fake で起こす。観測の後、YKSP のロギングを /srv/download/<group>/<project>/logging/ に移す。本番は config/bklog.json",
   "watch": [
     ["/cosmos3/45m/bklog/sam45psw", "/home/yk/bklog/yksppsw"],
     ["/cosmos3/45m/bklog/sam45otf", "/home/yk/bklog/ykspotf"]
@@ -12,5 +12,7 @@
   "mirror": {"A05": "A01", "A06": "A02", "A07": "A03", "A08": "A04",
              "A21": "A17", "A22": "A18", "A23": "A19", "A24": "A20"},
   "poll_s": 1.0,
-  "skip_existing": true
+  "skip_existing": true,
+  "deliver_root": "/srv/download",
+  "merge_cmd": null
 }
