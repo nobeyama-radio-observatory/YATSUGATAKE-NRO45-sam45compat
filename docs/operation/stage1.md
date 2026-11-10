@@ -57,7 +57,7 @@ SAM45 のロギングには手を入れない（読むだけ）。SAM45 のロ�
 | `ifatt_mode` | `"follow"` |
 | `board.host` | ボード（`$B`） |
 | `board.bits` | ボードの `bits.json` の名前（`{"fine": …, "wide": …}`） |
-| `board.tmp_dir` | 一時ファイルの置き場所 |
+| `board.tmp_dir` | 一時ファイルの置き場所（`config/bklog.json` では一時置き場のディスクの `/home/yk/bklog/tmp`） |
 | `t_load_k` | 293.0（Tsys の T_R。担当者に確認中） |
 
 ## 1. 暫定 LC を起こす
@@ -92,7 +92,7 @@ PYTHONPATH=src python3 -m sam45compat.lc --config my.json 2>&1 | tee -a lc.log
   PYTHONPATH=src python3 -c "import sys; from sam45compat import samlog as sl; print(sl.summary(sl.read_file(sys.argv[1])))" <YKSP のロギング>
   # (L2 の数, 使う Array の数, ED があるか)
   ```
-- [ ] 暫定 LC がマージを起動し、観測生データ（YKSP）ができた【未定: マージのソフトと使い方は後で知らされる。観測生データ（YKSP）の置き場所も未定】
+- [ ] 暫定 LC がマージを起動し、観測生データ（YKSP）ができた【未定: マージのソフトと使い方は後で知らされる。観測生データ（YKSP）はストレージ・制御サーバーのストレージに置く（[`../design/data-delivery.md`](../design/data-delivery.md)）】
 - [ ] SAM45 のロギングも、いつもどおりマージされていることを確かめる
 - [ ] **肩代わりする Array だけの L1（`iary_usefg`・`iary_num`）でマージが通るか**を記録する（通らなければ、そのとき考える）
 - [ ] マージが `dbebw` の値（32 MHz など、SAM45 に無い値）・`idmy_flag` = 1 で困らないかを記録する

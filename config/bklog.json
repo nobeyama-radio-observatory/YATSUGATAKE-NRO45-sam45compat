@@ -28,7 +28,7 @@
     "ctl_port": 51000,
     "data_port": 51001,
     "bits": {"fine": "sam45-fine", "wide": "sam45-wide"},
-    "tmp_dir": "/var/tmp/sam45compat",
+    "tmp_dir": "/home/yk/bklog/tmp",
     "keep_tmp": false
   }
 }
