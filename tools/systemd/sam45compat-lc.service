@@ -3,7 +3,8 @@
 # 置き方: sudo cp tools/systemd/sam45compat-lc.service /etc/systemd/system/ && sudo systemctl daemon-reload
 #         sudo systemctl enable --now sam45compat-lc
 # ログ:   journalctl -u sam45compat-lc -f
-# --fake（ダミーのスペクトル）と config/bklog-dummy.json は試し用。ボードにつなぐときは ExecStart を変える。
+# --fake（ダミーのスペクトル）と config/bklog-dummy.json は試し用。ボードにつなぐときは ExecStart を
+# --config config/bklog.json（--fake なし。board.host・board.bits を実機に合わせる）に変える。
 [Unit]
 Description=YATSUGATAKE sam45compat 暫定 LC（bklog の監視）
 Wants=network-online.target

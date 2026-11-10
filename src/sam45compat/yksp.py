@@ -4,11 +4,13 @@
 docs/design/standin-study.md の「YKSP のロギング」:
 - L0: SAM45 のものを写す（中の名前・バックエンドの種類は SAM45 のまま）
 - L1: 写して、f2 の書き換え（mapping.rewrite_l1）と、肩代わりする Array だけの設定（restrict_arrays）
-- L2: SAM45 の 1 積分ごとに、肩代わりする Array の L2 を 1 つずつ。付随の欄は同じ積分の SAM45 の L2 から写し、
+- L2: SAM45 の 1 積分ごとに、肩代わりする Array の L2 を 1 つずつ。付随の欄は同じ積分の SAM45 の L2 から写し
+  （同じ Array の L2 があればそれ。SAM45 は肩代わりの Array の L2 もスペクトルをダミー（0）にして書く）、
   名前・番号・スペクトル・idmy_flag・dtsys を書き換える。ZERO は 8192。取れない Array は idmy_flag = 1
 - ED: SAM45 が ED を書いたら書く
 
-段階 1 は YKSP のロギングだけのファイル、段階 1.1・2 は SAM45 のロギングとの合体（combine.py）に同じものを使う。
+どの段階も YKSP のロギングだけのファイルを書き、観測の後にマージして観測生データ（YKSP）にする（2026-11-10）。
+合体（combine.py）は 2026-11-10 にやめたが、コードは残している。
 """
 
 from __future__ import annotations
@@ -126,7 +128,7 @@ class YkspBuilder:
     # ---- 頭 ----
 
     def header(self, ctl: sl.Record, obs: sl.Record, only_targets: bool = True) -> List[sl.Record]:
-        """L0 と書き換えた L1。only_targets で肩代わりする Array だけの L1（段階 1 の YKSP 単独のファイル）。"""
+        """L0 と書き換えた L1。only_targets で肩代わりする Array だけの L1（YKSP のロギング。False は合体用）。"""
         l1 = mp.rewrite_l1(obs, self.plan, self.ifatt_mode)
         self._ifatt = {i: float(l1.s.iary_ifatt[i]) for i in self.targets}
         if only_targets:
@@ -144,9 +146,10 @@ class YkspBuilder:
 
     def integration(self, integ: Integration) -> List[L2Result]:
         """1 積分ぶんの、肩代わりする Array の L2（Array の順）。"""
-        tmpl = integ.records[0].s
+        by_name = {sl.cstr(r.s.cary_name): r.s for r in integ.records}
         out = []
         for idx in self.targets:
+            tmpl = by_name.get(sl.array_logname(idx), integ.records[0].s)
             rec = sl.Record("L2", sl.LogDat.from_buffer_copy(bytes(tmpl)))
             d = rec.s
             sl.set_cstr(d, "cary_name", sl.array_logname(idx))

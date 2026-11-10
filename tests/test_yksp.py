@@ -130,6 +130,25 @@ class TestBuilder(unittest.TestCase):
         buf = b"".join(r.to_bytes() for r in out)
         self.assertEqual([r.kind for r in sl.iter_records(buf)], kinds)
 
+    def test_template_from_same_array(self):
+        # SAM45 は肩代わりの Array の L2 もダミー（0）で書く。付随の欄は同じ Array の L2 から写す
+        sam = _sam45_records(self.obs, range(8))
+        for r in sam:
+            if r.kind == "L2":
+                r.s.dweather[1] = 900.0 + r.s.iary_no          # Array ごとに違う値
+        b = yk.YkspBuilder(self.plan, mp.IFATT_FOLLOW, self.dumps)
+        out, _ = yk.build_offline(sam, b)
+        l2 = [r.s for r in out if r.kind == "L2"]
+        self.assertEqual([d.dweather[1] for d in l2[:4]], [945.0, 946.0, 947.0, 948.0])
+        self.assertEqual([d.iary_no for d in l2[:4]], [45, 46, 47, 48])
+        # 同じ Array の L2 が無ければ、最初の L2 から写す
+        sam = _sam45_records(self.obs, range(4))
+        for r in sam:
+            if r.kind == "L2":
+                r.s.dweather[1] = 900.0 + r.s.iary_no
+        out, _ = yk.build_offline(sam, yk.YkspBuilder(self.plan, mp.IFATT_FOLLOW, self.dumps))
+        self.assertEqual([r.s.dweather[1] for r in out if r.kind == "L2"][:4], [941.0] * 4)
+
     def test_tsys(self):
         class Levels(FakeDumps):
             def interval(self, key, st, ed):

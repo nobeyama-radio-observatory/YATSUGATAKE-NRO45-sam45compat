@@ -46,12 +46,12 @@ SAM45 のロギングには手を入れない（読むだけ）。SAM45 のロ�
 
 ### 設定
 
-`config/example.json` を写して直す。段階 1 で変えるところ:
+45m では `config/bklog.json`（bklog を読み `/home/yk/bklog` に書く。`mirror` なし）を写して直す。段階 1 で見るところ:
 
 | 欄 | 段階 1 の値 |
 |---|---|
 | `watch` | 読む場所と書く場所の組: `[["/cosmos3/45m/bklog/sam45psw", "/home/yk/bklog/yksppsw"], ["/cosmos3/45m/bklog/sam45otf", "/home/yk/bklog/ykspotf"]]`（`config/bklog-dummy.json` と同じ。`watch` があると `log_dir`・`out_dir` は使わない） |
-| `assign` | A05〜A08・A21〜A24（`config/example.json` のまま） |
+| `assign` | A05〜A08・A21〜A24（`config/bklog.json` のまま） |
 | `output` | `"separate"`（既定） |
 | `in_prefix` | `""` |
 | `ifatt_mode` | `"follow"` |

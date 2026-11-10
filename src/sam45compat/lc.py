@@ -3,17 +3,19 @@
 
 SAM45 のロギングの置き場所を見回り、観測ごとに:
 1. L1 を読んだら、mapping で予定を作り、分光計を準備する（LOAD・SET・START）
-2. YKSP のロギング（.YKSP.）に L0・L1 を書く
+2. YKSP のロギング（ファイル名の装置を YKSP にしたもの）に L0・L1 を書く
 3. SAM45 の L2 を積分ごとにまとめ、ダンプが届いたら束ねて YKSP の L2 を書く
 4. ED を読んだら、残りを書いて ED を書き、分光計を終える
 
-出力は 2 通り（設定の output）:
-- "separate"（段階 1・1.5）: YKSP のロギングを別のファイル（.YKSP.）に書く。肩代わりする Array だけの L1
-- "combined"（段階 2）: SAM45 LC が `_` 付きの名前で書くロギングを追いかけ、YKSP の L2 を合体して、
-  `_` の無い正規の名前で書く（combine.merge_integration）。L0・L1 は分光計の準備を待たずに先に書く
-段階 2 では、別スレッドで心拍のファイルを更新する。暫定 LC が止まると、見張り（watchdog.py）が受け持ちの印
-（<正規の名前>.passthrough）を置いて素通しで写す。暫定 LC は書く前に印を見て、あればその観測から手を引く。
-方針は docs/design/standin-study.md の「設定とタイミングの受け取り」「止まったときの備え」。
+出力は設定の output で選ぶ:
+- "separate"（使うのはこちら）: YKSP のロギングを別のファイルに書く。肩代わりする Array だけの L1。
+  45m では bklog を読み、/home/yk/bklog の下に書く（config/bklog.json）。観測の後にマージして
+  観測生データ（YKSP）にする（マージの起動は未実装。マージのソフトの到着待ち）
+- "combined"（2026-11-10 にやめた。コードは残す）: SAM45 LC が `_` 付きの名前で書くロギングを追いかけ、
+  YKSP の L2 を合体して、`_` の無い正規の名前で書く（combine.merge_integration）。
+  別スレッドで心拍のファイルを更新し、暫定 LC が止まると見張り（watchdog.py）が受け持ちの印
+  （<正規の名前>.passthrough）を置いて素通しで写す。暫定 LC は書く前に印を見て、あればその観測から手を引く。
+方針は docs/design/standin-study.md の「方針の見直し」「設定とタイミングの受け取り」。
 """
 
 from __future__ import annotations
@@ -55,9 +57,9 @@ class LcConfig:
     # 置き場所が複数のとき: [[SAM45 の置き場所, YKSP の置き場所], ...]（45m の bklog は sam45psw・sam45otf に分かれる）。
     # 指定すると log_dir・out_dir は使わない
     watch: Optional[List[List[str]]] = None
-    output: str = "separate"                      # "separate"（段階 1・1.5）/ "combined"（段階 2）
+    output: str = "separate"                      # "separate" / "combined"（合体。2026-11-10 にやめた）
     in_backend: str = "SAM45"
-    in_prefix: str = ""                           # 段階 2 では "_"
+    in_prefix: str = ""                           # combined では "_"
     out_backend: str = "YKSP"                     # separate のときのファイル名の装置
     ifatt_mode: str = mp.IFATT_FOLLOW
     assign: Dict[str, mp.Slot] = field(default_factory=lambda: dict(mp.DEFAULT_ASSIGN))
@@ -73,11 +75,12 @@ class LcConfig:
     ready_margin_s: float = 0.05                  # 積分の終わりからこれだけ後のダンプまで届いたら束ねる
     ready_timeout_s: float = 5.0                  # これだけ待っても届かなければ、ある分で束ねる（足りなければ無効）
     skip_existing: bool = True                    # 起動したときに既にある観測は扱わない
-    heartbeat_path: Optional[str] = None          # 段階 2: 心拍のファイル（見張りが見る）
+    heartbeat_path: Optional[str] = None          # combined: 心拍のファイル（見張りが見る）
     heartbeat_s: float = 2.0
     hang_s: float = 180.0                         # 本体の 1 周がこれより長く止まったら心拍を止める（LOAD の待ちより長く）
     # 試験用: L1 で使われていない肩代わりの Array を、ほかの Array の設定で埋める（{"A05": "A01", ...}）。
-    # 故障した Array を観測者が使わない今の観測でも、YKSP のロギングを作って流れを確かめるため。本番では空にする
+    # 故障した Array を観測者が使わない観測でも、YKSP のロギングを作って流れを確かめるため。
+    # 本番では空にする（SAM45 は肩代わりの Array も L1 に設定を書く。2026-11-10）
     mirror: Dict[str, str] = field(default_factory=dict)
     board: Dict[str, object] = field(default_factory=dict)   # board.BoardConfig の欄（host・ctl_port・data_port・bits・tmp_dir など）
 
@@ -190,7 +193,7 @@ class Session:
         mask = DEFAULT_FLAG_MASK if cfg.flag_mask is None else cfg.flag_mask
         self.builder = yk.YkspBuilder(plan, cfg.ifatt_mode, self.spec.dumps(), cfg.scale,
                                       cfg.min_coverage, mask, cfg.t_load_k)
-        # 頭は準備（LOAD は 10〜20 s）を待たずに書く（段階 2 で正規のファイルを遅らせない）
+        # 頭は準備（LOAD は 10〜20 s）を待たずに書く（combined で正規のファイルを遅らせないため）
         self._check_marker()
         self._out = open(self.out_path, "wb")
         self._write(self.builder.header(ctl, obs, only_targets=not self.combined))

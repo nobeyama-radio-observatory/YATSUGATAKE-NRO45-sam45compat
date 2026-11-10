@@ -1,5 +1,5 @@
 {
-  "_comment": "yk-c の試し: bklog の SAM45 のロギングの新規作成をきっかけに、YKSP だけのロギングをダミーのスペクトルで作る。--fake で起こす",
+  "_comment": "yk-c の試し: bklog の SAM45 のロギングの新規作成をきっかけに、YKSP だけのロギングをダミーのスペクトルで作る。--fake で起こす。本番は config/bklog.json（mirror なし）",
   "watch": [
     ["/cosmos3/45m/bklog/sam45psw", "/home/yk/bklog/yksppsw"],
     ["/cosmos3/45m/bklog/sam45otf", "/home/yk/bklog/ykspotf"]
