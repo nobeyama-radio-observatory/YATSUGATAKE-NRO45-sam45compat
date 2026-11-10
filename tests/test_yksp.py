@@ -131,7 +131,7 @@ class TestBuilder(unittest.TestCase):
         self.assertEqual([r.kind for r in sl.iter_records(buf)], kinds)
 
     def test_template_from_same_array(self):
-        # SAM45 は肩代わりの Array の L2 もダミー（0）で書く。付随の欄は同じ Array の L2 から写す
+        # SAM45 のロギングに肩代わりの Array の L2 があれば、付随の欄は同じ Array の L2 から写す
         sam = _sam45_records(self.obs, range(8))
         for r in sam:
             if r.kind == "L2":
@@ -148,6 +148,13 @@ class TestBuilder(unittest.TestCase):
                 r.s.dweather[1] = 900.0 + r.s.iary_no
         out, _ = yk.build_offline(sam, yk.YkspBuilder(self.plan, mp.IFATT_FOLLOW, self.dumps))
         self.assertEqual([r.s.dweather[1] for r in out if r.kind == "L2"][:4], [941.0] * 4)
+        # L1 を埋めた元の Array を渡せば、その L2 から写す（A05←A01 … A08←A04。2026-11-10）
+        b = yk.YkspBuilder(self.plan, mp.IFATT_FOLLOW, self.dumps, template_src={4: 0, 5: 1, 6: 2, 7: 3})
+        out, _ = yk.build_offline(sam, b)
+        l2 = [r.s for r in out if r.kind == "L2"]
+        self.assertEqual([d.dweather[1] for d in l2[:4]], [941.0, 942.0, 943.0, 944.0])
+        self.assertEqual([sl.cstr(d.cary_name) for d in l2[:4]], ["A5", "A6", "A7", "A8"])
+        self.assertEqual([d.iary_no for d in l2[:4]], [45, 46, 47, 48])
 
     def test_tsys(self):
         class Levels(FakeDumps):

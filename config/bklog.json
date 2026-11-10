@@ -1,5 +1,5 @@
 {
-  "_comment": "45m の本番: bklog の SAM45 のロギングを読み、/home/yk/bklog の下に YKSP のロギングを書く（docs/design/standin-study.md の「方針の見直し」）。board.host・board.bits は実機に合わせる。観測の後、YKSP のロギング（とマージの出力）を /srv/download/<group>/<project>/ の logging/・psw/・otf/ に移す。merge_cmd はマージのソフトが届いたら書く",
+  "_comment": "45m の本番: bklog の SAM45 のロギングを読み、/home/yk/bklog の下に YKSP のロギングを書く（docs/design/standin-study.md の「方針の見直し」）。board.host・board.bits は実機に合わせる。観測の後、YKSP のロギング（とマージの出力）を /srv/download/<group>/<project>/ の logging/・psw/・otf/ に移す。merge_cmd はマージのソフトが届いたら書く。SAM45 のロギングに無い A05〜A08・A21〜A24 は mirror で A01〜A04・A17〜A20 の設定から作る",
   "watch": [
     ["/cosmos3/45m/bklog/sam45psw", "/home/yk/bklog/yksppsw", "psw"],
     ["/cosmos3/45m/bklog/sam45otf", "/home/yk/bklog/ykspotf", "otf"]
@@ -9,6 +9,8 @@
   "in_prefix": "",
   "out_backend": "YKSP",
   "ifatt_mode": "follow",
+  "mirror": {"A05": "A01", "A06": "A02", "A07": "A03", "A08": "A04",
+             "A21": "A17", "A22": "A18", "A23": "A19", "A24": "A20"},
   "assign": {
     "A05": ["A", 0], "A06": ["B", 0], "A07": ["C", 0], "A08": ["D", 0],
     "A21": ["A", 1], "A22": ["B", 1], "A23": ["C", 1], "A24": ["D", 1]

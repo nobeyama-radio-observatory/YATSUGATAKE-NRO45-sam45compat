@@ -5,7 +5,8 @@ docs/design/standin-study.md の「YKSP のロギング」:
 - L0: SAM45 のものを写す（中の名前・バックエンドの種類は SAM45 のまま）
 - L1: 写して、f2 の書き換え（mapping.rewrite_l1）と、肩代わりする Array だけの設定（restrict_arrays）
 - L2: SAM45 の 1 積分ごとに、肩代わりする Array の L2 を 1 つずつ。付随の欄は同じ積分の SAM45 の L2 から写し
-  （同じ Array の L2 があればそれ。SAM45 は肩代わりの Array の L2 もスペクトルをダミー（0）にして書く）、
+  （同じ Array の L2 があればそれ、無ければ L1 を埋めた元の Array（A05 なら A01）、それも無ければ最初の L2。
+  SAM45 のロギングには A05〜A08・A21〜A24 が含まれない。2026-11-10）、
   名前・番号・スペクトル・idmy_flag・dtsys を書き換える。ZERO は 8192。取れない Array は idmy_flag = 1
 - ED: SAM45 が ED を書いたら書く
 
@@ -112,8 +113,9 @@ class YkspBuilder:
 
     def __init__(self, plan: mp.Plan, ifatt_mode: str, dumps: DumpSource,
                  scale: float = 1.0, min_coverage: float = 0.9, flag_mask: int = 0,
-                 t_load_k: Optional[float] = T_LOAD_K):
+                 t_load_k: Optional[float] = T_LOAD_K, template_src: Optional[Dict[int, int]] = None):
         self.plan = plan
+        self.template_src = dict(template_src or {})   # 肩代わりの Array → L2 の付随の欄を写す元の Array
         self.ifatt_mode = ifatt_mode
         self.dumps = dumps
         self.scale = scale
@@ -149,7 +151,11 @@ class YkspBuilder:
         by_name = {sl.cstr(r.s.cary_name): r.s for r in integ.records}
         out = []
         for idx in self.targets:
-            tmpl = by_name.get(sl.array_logname(idx), integ.records[0].s)
+            tmpl = by_name.get(sl.array_logname(idx))
+            if tmpl is None and idx in self.template_src:
+                tmpl = by_name.get(sl.array_logname(self.template_src[idx]))
+            if tmpl is None:
+                tmpl = integ.records[0].s
             rec = sl.Record("L2", sl.LogDat.from_buffer_copy(bytes(tmpl)))
             d = rec.s
             sl.set_cstr(d, "cary_name", sl.array_logname(idx))

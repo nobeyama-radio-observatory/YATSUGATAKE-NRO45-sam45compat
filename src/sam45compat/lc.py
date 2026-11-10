@@ -81,9 +81,9 @@ class LcConfig:
     heartbeat_path: Optional[str] = None          # combined: 心拍のファイル（見張りが見る）
     heartbeat_s: float = 2.0
     hang_s: float = 180.0                         # 本体の 1 周がこれより長く止まったら心拍を止める（LOAD の待ちより長く）
-    # 試験用: L1 で使われていない肩代わりの Array を、ほかの Array の設定で埋める（{"A05": "A01", ...}）。
-    # 故障した Array を観測者が使わない観測でも、YKSP のロギングを作って流れを確かめるため。
-    # 本番では空にする（SAM45 は肩代わりの Array も L1 に設定を書く。2026-11-10）
+    # SAM45 のロギングに無い肩代わりの Array を、ほかの Array の設定で埋める（{"A05": "A01", ...}）。
+    # SAM45 のロギングには A05〜A08・A21〜A24 が含まれないので、A01〜A04・A17〜A20 の設定から作る（2026-11-10）。
+    # L1 で既に使われている Array はそのまま（SAM45 のロギングに含まれていれば、その設定を使う）
     mirror: Dict[str, str] = field(default_factory=dict)
     board: Dict[str, object] = field(default_factory=dict)   # board.BoardConfig の欄（host・ctl_port・data_port・bits・tmp_dir など）
     # 観測の後の処理（deliver.py）。None なら移さない（YKSP のロギングは out_dir に残る）。45m では /srv/download
@@ -190,7 +190,9 @@ class Session:
     def _start(self, ctl: sl.Record, obs: sl.Record) -> None:
         cfg = self.cfg
         self.n_used = sum(obs.s.iary_usefg)
+        filled: Dict[int, int] = {}
         if cfg.mirror:
+            filled = mirror_sources(obs, cfg.mirror)
             obs = mirror_arrays(obs, cfg.mirror)
         ifm = mp.Sam45IfModel(cfg.sam45_if_ascending, cfg.sam45_k_offset)
         plan = mp.plan(obs.s, cfg.assign, ifm, cfg.shift)
@@ -203,7 +205,7 @@ class Session:
         from .recorder import DEFAULT_FLAG_MASK
         mask = DEFAULT_FLAG_MASK if cfg.flag_mask is None else cfg.flag_mask
         self.builder = yk.YkspBuilder(plan, cfg.ifatt_mode, self.spec.dumps(), cfg.scale,
-                                      cfg.min_coverage, mask, cfg.t_load_k)
+                                      cfg.min_coverage, mask, cfg.t_load_k, template_src=filled)
         # 頭は準備（LOAD は 10〜20 s）を待たずに書く（combined で正規のファイルを遅らせないため）
         self._check_marker()
         self._out = open(self.out_path, "wb")
@@ -287,15 +289,28 @@ class Session:
             self._out = None
 
 
+def mirror_sources(obs: sl.Record, mirror: Dict[str, str]) -> Dict[int, int]:
+    """埋める Array → 元の Array（添字）。L1 で使われていない Array（鍵）のうち、元（値）が使われているものだけ。"""
+    o = obs.s
+    out = {}
+    for dst_name, src_name in sorted(mirror.items()):
+        dst, src = sl.array_index(dst_name), sl.array_index(src_name)
+        if not o.iary_usefg[dst] and o.iary_usefg[src]:
+            out[dst] = src
+    return out
+
+
 def mirror_arrays(obs: sl.Record, mirror: Dict[str, str]) -> sl.Record:
-    """試験用: L1 で使われていない Array（鍵）を、使われている Array（値）の設定で埋めた L1 の写し。"""
+    """L1 で使われていない Array（鍵）を、使われている Array（値）の設定で埋めた L1 の写し。
+
+    SAM45 のロギングに無い肩代わりの Array（A05〜A08・A21〜A24）を、A01〜A04・A17〜A20 の設定から作る（2026-11-10）。
+    Array ごとの欄（32 要素の配列）を全部写す。周波数の欄は、この後 mapping.rewrite_l1（f2）で YATSUGATAKE の値になる。
+    """
     obs = sl.copy_record(obs)
     o = obs.s
     done = []
-    for dst_name, src_name in sorted(mirror.items()):
-        dst, src = sl.array_index(dst_name), sl.array_index(src_name)
-        if o.iary_usefg[dst] or not o.iary_usefg[src]:
-            continue
+    for dst, src in mirror_sources(obs, mirror).items():
+        dst_name, src_name = sl.array_label(dst), sl.array_label(src)
         for fname, ftype in type(o)._fields_:
             arr = getattr(o, fname)
             if isinstance(arr, C.Array) and len(arr) == sl.ARYMAX:
@@ -305,7 +320,7 @@ def mirror_arrays(obs: sl.Record, mirror: Dict[str, str]) -> sl.Record:
         o.iary_num += 1
         done.append(f"{dst_name}←{src_name}")
     if done:
-        log.warning("試験: 使われていない Array を写した設定で埋めた: %s", " ".join(done))
+        log.info("SAM45 のロギングに無い Array を、写した設定で埋めた: %s", " ".join(done))
     return obs
 
 

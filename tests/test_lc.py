@@ -150,8 +150,11 @@ class TestBklogLayout(unittest.TestCase):
             cfg = lcm.LcConfig(watch=[[dirs["sam45psw"], dirs["yksppsw"]], [dirs["sam45otf"], dirs["ykspotf"]]],
                                mirror={"A05": "A01", "A06": "A02", "A07": "A03", "A08": "A04"})
             lc = lcm.LC(cfg, FakeSpectrometer())
-            # 観測者は A01〜A04 だけを使う（A05〜A08 は故障）
+            # SAM45 のロギングには A01〜A04 だけ（A05〜A08 は含まれない。2026-11-10）
             recs = _sam45_records(_obs(arrays=range(4)), range(4))
+            for r in recs:
+                if r.kind == "L2":
+                    r.s.dweather[1] = 900.0 + r.s.iary_no
             _write(os.path.join(dirs["sam45otf"], "SAM45.otfobs.grp.prj.20261110000001"), recs)
             with open(os.path.join(dirs["sam45psw"], "README"), "w") as f:
                 f.write("x")                                   # ロギングでない名前は見ない
@@ -165,7 +168,29 @@ class TestBklogLayout(unittest.TestCase):
             self.assertEqual([i for i in range(32) if out[1].s.iary_usefg[i]], [4, 5, 6, 7])
             self.assertEqual(out[1].s.dbebw[4], 32e6)
             self.assertTrue(all(r.s.idmy_flag == 0 for r in out if r.kind == "L2"))
+            # L2 の付随の欄は、埋めた元の Array（A05 なら A01）の L2 から
+            l2 = [r.s for r in out if r.kind == "L2"]
+            self.assertEqual([(sl.cstr(x.cary_name), x.dweather[1]) for x in l2[:4]],
+                             [("A5", 941.0), ("A6", 942.0), ("A7", 943.0), ("A8", 944.0)])
             self.assertEqual(lc.sessions, {})
+
+    def test_mirror_second_window(self):
+        # 2 つ目の窓: A21〜A24 は A17〜A20 から（SAM45 のロギングには A01〜A04・A17〜A20 だけ。2026-11-10）
+        obs = _obs(bw1=31.25, bw2=31.25, k0_2=262144, arrays=range(4), arrays2=range(16, 20))
+        mirror = {"A05": "A01", "A06": "A02", "A07": "A03", "A08": "A04",
+                  "A21": "A17", "A22": "A18", "A23": "A19", "A24": "A20"}
+        self.assertEqual(lcm.mirror_sources(obs, mirror),
+                         {4: 0, 5: 1, 6: 2, 7: 3, 20: 16, 21: 17, 22: 18, 23: 19})
+        o = lcm.mirror_arrays(obs, mirror).s
+        self.assertEqual([i for i in range(32) if o.iary_usefg[i]], [0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23])
+        self.assertEqual(o.iary_num, 16)
+        self.assertEqual(o.dfqdat_f0[20], obs.s.dfqdat_f0[16])
+        self.assertEqual(obs.s.iary_usefg[20], 0)                       # 元は変えない
+        plan = mp.plan(o)
+        self.assertEqual(sorted(plan.windows), [4, 5, 6, 7, 20, 21, 22, 23])
+        # SAM45 のロギングに含まれていれば、その設定を使う（埋めない）
+        obs2 = _obs(arrays=range(8))
+        self.assertEqual(lcm.mirror_sources(obs2, mirror), {})
 
     def test_unreadable_dir_does_not_stop(self):
         with tempfile.TemporaryDirectory() as d:
