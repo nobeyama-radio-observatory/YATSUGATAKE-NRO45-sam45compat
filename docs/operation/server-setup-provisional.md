@@ -180,6 +180,54 @@ journalctl -u sam45compat-lc -f        # ログ（「置き場所を読めた」
 - **観測の途中で起こし直すと、その観測は扱わない**（YKSP のロギングは途中で切れたまま残る）。
   `git pull` で更新したら、観測の合間に `sudo systemctl restart sam45compat-lc`
 
+### 5.2 観測生データ（YKSP）の配信（Apache）
+
+方式は [`../design/data-delivery.md`](../design/data-delivery.md)。所内 LAN から HTTPS で、LDAP のアカウントでログインし、自分の `<group>` の下だけを見せる。
+
+1. 入れる。設定ができるまでは、自分の計算機からだけ受ける:
+
+   ```sh
+   sudo apt update
+   sudo apt install -y apache2 ldap-utils        # ldap-utils は ldapsearch で LDAP の接続を確かめるため
+   sudo sed -i 's/^Listen 80$/Listen 127.0.0.1:80/' /etc/apache2/ports.conf
+   sudo a2dissite 000-default                    # 既定のページを消す
+   sudo a2enmod ldap authnz_ldap ssl ratelimit headers
+   sudo systemctl restart apache2
+   ```
+
+2. LDAP の接続を確かめる: `ldapsearch -x -H ldaps://<LDAP のサーバー> -b "<base DN>" "(uid=<アカウント>)" uid cn`
+3. HTTPS のサイトを作る。証明書: （記入: 所内の CA か自己署名か、置き場所）
+4. 待ち受けをダウンロード用の NIC の IP にする（`/etc/apache2/ports.conf` の `Listen <ダウンロード用の IP>:443`）。
+   ファイアウォール: （記入: ufw の状態と、開けた口）
+5. [`tools/apache/yksp-download.conf`](../../tools/apache/yksp-download.conf) の中身を `<VirtualHost *:443>` に入れ、`<...>` を埋める:
+
+   ```sh
+   sudo apache2ctl configtest && sudo systemctl reload apache2
+   ```
+
+6. 試験用の `<group>` を 2 つ作り、外の計算機から確かめる（2026-11-10 に全部期待どおり）:
+
+   ```sh
+   sudo mkdir -p <ストレージ>/<自分のアカウント>/proj1 <ストレージ>/zz-other/proj1
+   echo mine  | sudo tee <ストレージ>/<自分のアカウント>/proj1/a.txt
+   echo other | sudo tee <ストレージ>/zz-other/proj1/b.txt
+   U=<自分のアカウント>; H=https://<サーバー>
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/yksp/$U/proj1/a.txt          # 200
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/yksp/$U/                     # 200（自分の一覧）
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/yksp/zz-other/proj1/b.txt    # 403（他人）
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/yksp/                        # 403（頭の一覧）
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' --path-as-is "$H/yksp/$U/../zz-other/proj1/b.txt"    # 403 か 404
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' --path-as-is "$H/yksp/$U/%2e%2e/zz-other/proj1/b.txt" # 403 か 404
+   curl -sk       -o /dev/null -w '%{http_code}\n' $H/yksp/$U/proj1/a.txt          # 401（ログインなし）
+   wget -q --no-check-certificate --user=$U --ask-password -r -np -nH --cut-dirs=1 $H/yksp/$U/   # 丸ごと取れる
+   ```
+
+   確かめたら、試験用のフォルダ（特に `zz-other`）を消す。
+
+- `<ストレージ>` は、仮機では仮の場所（記入: ）。本番機ではストレージ（RAIDZ）のマウント先にする
+- LDAP の大文字・小文字: LDAP は区別せずにログインを通すが、`<group>` との比較は区別する（`Foo` でログインすると `foo` に入れない。入れないだけで、他人のものは見えない）
+- まだ: ダウンロードの速さの制限（`mod_ratelimit`）、Apache の優先度（`nice`・`ionice`）
+
 ## 6. まだやらないこと
 
 - **COSMOS のネットワークへの接続と、SAM45 のロギングのマウント**は、SAM45 の運用に影響しうるので、
@@ -202,3 +250,4 @@ journalctl -u sam45compat-lc -f        # ログ（「置き場所を読めた」
 | 2026-11-09 | 手順 4 まで済んだ。固定 IP と NTP の手順を足した（4.1・4.2） |
 | 2026-11-09 | 手順 5: submodule を取り、`testpaths` を足して試験が通った |
 | 2026-11-10 | bklog をマウントし、暫定 LC（`--fake`）で sam45psw の観測 2 つに反応することを確かめた。起動時の自動のマウントと起動（5.1）を足した |
+| 2026-11-10 | Apache を入れ、HTTPS・LDAP の Basic 認証・自分の `<group>` だけを通す設定（5.2）。外の計算機から、自分は見られ、他人と頭の一覧は 403 になることを確かめた |
