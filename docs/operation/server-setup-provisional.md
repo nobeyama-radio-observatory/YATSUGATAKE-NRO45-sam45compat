@@ -155,11 +155,11 @@ pytest
 
 ### 5.1 起動時に bklog をマウントし、暫定 LC を起こす
 
-bklog（`133.40.197.52:/mstorage/cosmos3/45m/bklog`）は `@gh_nfs` に許された計算機だけがマウントできる（仮機は許可済み）。
+bklog（`<bklog のサーバー>:/mstorage/cosmos3/45m/bklog`。サーバーの IP は担当者に聞く）は `@gh_nfs` に許された計算機だけがマウントできる（仮機は許可済み）。
 読み取り専用でマウントする。`/etc/fstab` に 1 行:
 
 ```
-133.40.197.52:/mstorage/cosmos3/45m/bklog  /cosmos3/45m/bklog  nfs  ro,soft,timeo=50,retrans=3,_netdev,nofail,x-systemd.automount,x-systemd.mount-timeout=30  0 0
+<bklog のサーバー>:/mstorage/cosmos3/45m/bklog  /cosmos3/45m/bklog  nfs  ro,soft,timeo=50,retrans=3,_netdev,nofail,x-systemd.automount,x-systemd.mount-timeout=30  0 0
 ```
 
 - `_netdev`: ネットワークが上がってからマウントする。`nofail`: ストレージが止まっていても起動を止めない
