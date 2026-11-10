@@ -173,6 +173,16 @@ class TestBklogLayout(unittest.TestCase):
             lc = lcm.LC(cfg, FakeSpectrometer())
             lc.step(0.0)                                       # 置き場所が無くても落ちない
             self.assertEqual(lc.sessions, {})
+            # 起動の後にマウントされた: そのときにあるものは扱わず、その後にできたものだけを扱う
+            os.makedirs(os.path.join(d, "none"))
+            recs = _sam45_records(_obs(arrays=range(8)), range(8))
+            _write(os.path.join(d, "none", "SAM45.old.grp.prj.20261110000001"), recs)
+            lc.step(0.0)
+            self.assertFalse(os.path.exists(os.path.join(d, "out", "YKSP.old.grp.prj.20261110000001")))
+            _write(os.path.join(d, "none", "SAM45.new.grp.prj.20261110000002"), recs)
+            lc.step(0.0)
+            lc.step(0.0)
+            self.assertTrue(os.path.exists(os.path.join(d, "out", "YKSP.new.grp.prj.20261110000002")))
 
 
 @unittest.skipUnless(SAMPLE, "SAM45_SAMPLE が無い")

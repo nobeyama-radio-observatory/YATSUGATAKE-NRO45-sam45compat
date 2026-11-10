@@ -153,6 +153,33 @@ pytest
 - Python の版: 3.14.4（Ubuntu 24.04 の標準は 3.12。OS の版を `lsb_release -a` で確かめて記入: ）
 - 試験の結果: `pytest` で全部通過（2026-11-09）
 
+### 5.1 起動時に bklog をマウントし、暫定 LC を起こす
+
+bklog（`133.40.197.52:/mstorage/cosmos3/45m/bklog`）は `@gh_nfs` に許された計算機だけがマウントできる（仮機は許可済み）。
+読み取り専用でマウントする。`/etc/fstab` に 1 行:
+
+```
+133.40.197.52:/mstorage/cosmos3/45m/bklog  /cosmos3/45m/bklog  nfs  ro,soft,timeo=50,retrans=3,_netdev,nofail,x-systemd.automount,x-systemd.mount-timeout=30  0 0
+```
+
+- `_netdev`: ネットワークが上がってからマウントする。`nofail`: ストレージが止まっていても起動を止めない
+- `x-systemd.automount`: 最初に読まれたときにマウントする。起動時に失敗しても、次に読まれたときにやり直す
+- 確かめる: `sudo systemctl daemon-reload && sudo mount -a && ls /cosmos3/45m/bklog/sam45psw | tail -3`
+
+暫定 LC は systemd のサービスにする（[`tools/systemd/sam45compat-lc.service`](../../tools/systemd/sam45compat-lc.service)。利用者 yk、`.venv` の python、落ちたら 10 s 後に起こし直す）:
+
+```sh
+sudo cp tools/systemd/sam45compat-lc.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now sam45compat-lc
+systemctl status sam45compat-lc
+journalctl -u sam45compat-lc -f        # ログ（「置き場所を読めた」「新しいロギング」など）
+```
+
+- 起動した時点（マウントが後なら、置き場所を初めて読めた時点）に既にあるロギングは扱わない
+- **観測の途中で起こし直すと、その観測は扱わない**（YKSP のロギングは途中で切れたまま残る）。
+  `git pull` で更新したら、観測の合間に `sudo systemctl restart sam45compat-lc`
+
 ## 6. まだやらないこと
 
 - **COSMOS のネットワークへの接続と、SAM45 のロギングのマウント**は、SAM45 の運用に影響しうるので、
@@ -174,3 +201,4 @@ pytest
 | 2026-11-09 | 記録を作った |
 | 2026-11-09 | 手順 4 まで済んだ。固定 IP と NTP の手順を足した（4.1・4.2） |
 | 2026-11-09 | 手順 5: submodule を取り、`testpaths` を足して試験が通った |
+| 2026-11-10 | bklog をマウントし、暫定 LC（`--fake`）で sam45psw の観測 2 つに反応することを確かめた。起動時の自動のマウントと起動（5.1）を足した |

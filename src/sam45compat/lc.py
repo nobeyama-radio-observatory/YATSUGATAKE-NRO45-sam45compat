@@ -302,7 +302,9 @@ class LC:
         self.notify = notify or Notifier()
         self.sessions: Dict[str, Session] = {}
         self._unreadable = set()
-        self.seen = set(self._candidates()) if cfg.skip_existing else set()
+        self._primed = set()            # 一度でも読めた置き場所（skip_existing の「既にある」を決めた）
+        self.seen = set()
+        self._candidates()
         self._last_loop = time.monotonic()
         self._hb_stop = threading.Event()
         if cfg.heartbeat_path:
@@ -338,13 +340,22 @@ class LC:
                     self._unreadable.add(in_dir)
                 continue
             self._unreadable.discard(in_dir)
+            found = []
             for n in names:
                 try:
                     name = sl.LogName.parse(n)
                 except ValueError:
                     continue
                 if name.backend == self.cfg.in_backend and name.prefix == self.cfg.in_prefix:
-                    out[os.path.join(in_dir, n)] = out_dir
+                    found.append(os.path.join(in_dir, n))
+            if in_dir not in self._primed:
+                # 初めて読めたとき（起動時、または起動後にマウントされたとき）にあるものは扱わない
+                self._primed.add(in_dir)
+                if self.cfg.skip_existing:
+                    self.seen.update(found)
+                    log.info("置き場所を読めた: %s（既にある %d 個は扱わない）", in_dir, len(found))
+            for path in found:
+                out[path] = out_dir
         return dict(sorted(out.items()))
 
     def step(self, now: Optional[float] = None) -> None:

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# 暫定 LC を OS の起動時に起こす（yk-c の仮機。docs/operation/server-setup-provisional.md の 5.1）。
+# 置き方: sudo cp tools/systemd/sam45compat-lc.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#         sudo systemctl enable --now sam45compat-lc
+# ログ:   journalctl -u sam45compat-lc -f
+# --fake（ダミーのスペクトル）と config/bklog-dummy.json は試し用。ボードにつなぐときは ExecStart を変える。
+[Unit]
+Description=YATSUGATAKE sam45compat 暫定 LC（bklog の監視）
+Wants=network-online.target
+After=network-online.target remote-fs.target
+
+[Service]
+Type=simple
+User=yk
+WorkingDirectory=/home/yk/YATSUGATAKE-NRO45-sam45compat
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/yk/YATSUGATAKE-NRO45-sam45compat/.venv/bin/python3 -m sam45compat.lc --config config/bklog-dummy.json --fake
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
