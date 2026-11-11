@@ -18,18 +18,18 @@
 | NIC | （記入） |
 | ホスト名 | （記入。仮機とわかる名前にする。例: `sam45compat-tmp`） |
 | IP | 所内 LAN、固定（値を記入: アドレス / ゲートウェイ / DNS） |
-| OS | Ubuntu Server 24.04 LTS（ISO の版を記入: `ubuntu-24.04.x-live-server-amd64.iso`） |
+| OS | Ubuntu 26.04.1 LTS（`/etc/os-release` で確認。2026-11-10。記録を作ったときは 24.04 の予定だった） |
 
 ## 1. インストール用の USB を作る
 
-1. <https://ubuntu.com/download/server> から 24.04 LTS の最新のポイントリリースの ISO を落とす。
-2. 同じ場所の `SHA256SUMS` と照合する: `shasum -a 256 ubuntu-24.04.x-live-server-amd64.iso`
+1. <https://ubuntu.com/download/server> から LTS（仮機は 26.04）の最新のポイントリリースの ISO を落とす。
+2. 同じ場所の `SHA256SUMS` と照合する: `shasum -a 256 ubuntu-<版>-live-server-amd64.iso`
 3. USB に書く（Mac の例。`N` は `diskutil list` で確かめる。間違えると手元のディスクを消す）:
 
    ```sh
    diskutil list
    diskutil unmountDisk /dev/diskN
-   sudo dd if=ubuntu-24.04.x-live-server-amd64.iso of=/dev/rdiskN bs=4m status=progress
+   sudo dd if=ubuntu-<版>-live-server-amd64.iso of=/dev/rdiskN bs=4m status=progress
    diskutil eject /dev/diskN
    ```
 
@@ -140,7 +140,7 @@ submodule の URL が `git@github.com:` なので、仮機から GitHub に SSH 
 ```sh
 git clone --recurse-submodules https://github.com/nobeyama-radio-observatory/YATSUGATAKE-NRO45-sam45compat.git
 cd YATSUGATAKE-NRO45-sam45compat
-python3 -m venv .venv          # 24.04 はシステムの python に pip で入れられない（PEP 668）
+python3 -m venv .venv          # Ubuntu はシステムの python に pip で入れられない（PEP 668）
 . .venv/bin/activate
 pip install -e . pytest
 pytest
@@ -150,7 +150,7 @@ pytest
   - submodule が取れておらず、`s45proto` の import で止まった（鍵が無く SSH で取れなかった）。取り方を記入: （鍵 / HTTPS）
   - `pytest` が `external/YATSUGATAKE` の中の `test_nch.py`（単体で実行するスクリプト。最後に `sys.exit`）まで集めて止まった。
     `pyproject.toml` に `testpaths = ["tests"]` を足して直した。直す前は `pytest tests` で回避できる
-- Python の版: 3.14.4（Ubuntu 24.04 の標準は 3.12。OS の版を `lsb_release -a` で確かめて記入: ）
+- Python の版: 3.14.4（OS は Ubuntu 26.04.1 LTS）
 - 試験の結果: `pytest` で全部通過（2026-11-09）
 
 ### 5.1 起動時に bklog をマウントし、暫定 LC を起こす
@@ -191,40 +191,57 @@ journalctl -u sam45compat-lc -f        # ログ（「置き場所を読めた」
    sudo apt install -y apache2 ldap-utils        # ldap-utils は ldapsearch で LDAP の接続を確かめるため
    sudo sed -i 's/^Listen 80$/Listen 127.0.0.1:80/' /etc/apache2/ports.conf
    sudo a2dissite 000-default                    # 既定のページを消す
-   sudo a2enmod ldap authnz_ldap ssl ratelimit headers
+   sudo a2enmod ldap authnz_ldap ssl ratelimit headers rewrite
    sudo systemctl restart apache2
    ```
 
-2. LDAP の接続を確かめる: `ldapsearch -x -H ldaps://<LDAP のサーバー> -b "<base DN>" "(uid=<アカウント>)" uid cn`
+2. LDAP の接続を確かめる。`AuthLDAPURL` の絞り込み（`<絞り込み>`）に、ログインさせたいアカウントが当てはまること:
+
+   ```sh
+   ldapsearch -x -H ldap://<LDAP のサーバー> -b "<base DN>" "(&(uid=<アカウント>)<絞り込み>)" uid
+   ```
+
 3. HTTPS のサイトを作る。証明書: （記入: 所内の CA か自己署名か、置き場所）
 4. 待ち受けをダウンロード用の NIC の IP にする（`/etc/apache2/ports.conf` の `Listen <ダウンロード用の IP>:443`）。
    ファイアウォール: （記入: ufw の状態と、開けた口）
-5. [`tools/apache/yksp-download.conf`](../../tools/apache/yksp-download.conf) の中身を `<VirtualHost *:443>` に入れ、`<...>` を埋める:
+5. 書き換えを有効にし、[`tools/apache/yksp-download.conf`](../../tools/apache/yksp-download.conf) の中身を入れて `<...>` を埋める
+   （入れた場所を記入: ）:
 
    ```sh
+   sudo a2enmod rewrite
    sudo apache2ctl configtest && sudo systemctl reload apache2
    ```
 
-6. 試験用の `<group>` を 2 つ作り、外の計算機から確かめる（2026-11-10 に全部期待どおり）:
+6. 外の計算機から確かめる（2026-11-10 に全部期待どおり）。試験用の `<group>` を 2 つ作る:
 
    ```sh
-   sudo mkdir -p <ストレージ>/<自分のアカウント>/proj1 <ストレージ>/zz-other/proj1
-   echo mine  | sudo tee <ストレージ>/<自分のアカウント>/proj1/a.txt
-   echo other | sudo tee <ストレージ>/zz-other/proj1/b.txt
+   sudo mkdir -p /srv/download/<自分のアカウント>/proj1 /srv/download/zz-other/proj1
+   echo mine  | sudo tee /srv/download/<自分のアカウント>/proj1/a.txt
+   echo other | sudo tee /srv/download/zz-other/proj1/b.txt
    U=<自分のアカウント>; H=https://<サーバー>
-   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/yksp/$U/proj1/a.txt          # 200
-   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/yksp/$U/                     # 200（自分の一覧）
-   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/yksp/zz-other/proj1/b.txt    # 403（他人）
-   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/yksp/                        # 403（頭の一覧）
-   curl -sk -u $U -o /dev/null -w '%{http_code}\n' --path-as-is "$H/yksp/$U/../zz-other/proj1/b.txt"    # 403 か 404
-   curl -sk -u $U -o /dev/null -w '%{http_code}\n' --path-as-is "$H/yksp/$U/%2e%2e/zz-other/proj1/b.txt" # 403 か 404
-   curl -sk       -o /dev/null -w '%{http_code}\n' $H/yksp/$U/proj1/a.txt          # 401（ログインなし）
-   wget -q --no-check-certificate --user=$U --ask-password -r -np -nH --cut-dirs=1 $H/yksp/$U/   # 丸ごと取れる
+   curl -sk -u $U -o /dev/null -w '%{http_code} %{redirect_url}\n' $H/download     # 301 → $H/download/（末尾の / を足すだけ）
+   curl -sk -u $U -o /dev/null -w '%{http_code} %{redirect_url}\n' $H/download/    # 302 → $H/download/<自分>/
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/download/$U/                 # 200（自分の一覧）
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/download/$U/proj1/a.txt      # 200
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' $H/download/zz-other/proj1/b.txt   # 403（他人）
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' --path-as-is "$H/download/$U/../zz-other/proj1/b.txt"    # 403 か 404
+   curl -sk -u $U -o /dev/null -w '%{http_code}\n' --path-as-is "$H/download/$U/%2e%2e/zz-other/proj1/b.txt" # 403 か 404
+   curl -sk       -o /dev/null -w '%{http_code}\n' $H/download/                    # 401（ログインなし）
+   wget -q --no-check-certificate --user=$U --ask-password -r -np -nH --cut-dirs=2 $H/download/$U/   # 丸ごと取れる
    ```
 
    確かめたら、試験用のフォルダ（特に `zz-other`）を消す。
 
-- `<ストレージ>` は、仮機では仮の場所（記入: ）。本番機ではストレージ（RAIDZ）のマウント先にする
+- 頭（`/download`）を開くと、ログインの後に自分のフォルダへ転送する。転送の作りで踏んだ穴（2026-11-10）:
+  - `<LocationMatch>` の中の `Redirect "/download/%{REMOTE_USER}/"` は、名前が空のまま評価され、`/download//` に飛んだ
+  - `<VirtualHost>` の直下の `RewriteCond %{LA-U:REMOTE_USER}`（先にログインを確かめて名前を得る書き方）は、ログインが 401 になった
+  - `<Directory>` の中の `RewriteRule` は、`FollowSymLinks` か `SymLinksIfOwnerMatch` が無いと 403（`AH00670`）。
+    頭のフォルダだけ `SymLinksIfOwnerMatch` を許して通った。その後、`<group>` より下も同じ理由で 403 になったので、
+    `<DirectoryMatch>` で `RewriteEngine Off` にした（書き換えの設定は下のフォルダにも引き継がれる）
+- `SymLinksIfOwnerMatch` を頭で許すので、`/srv/download` の直下に持ち主の同じシンボリックリンクがあればたどる。
+  `deliver.py` は本物のフォルダしか作らない。`<group>` より下はたどらない
+- ログインできるのは、`AuthLDAPURL` の絞り込みに当てはまるアカウントだけ。観測者のアカウントが当てはまるかを確かめる
+- `AuthLDAPURL` は `ldap://`（暗号化なし）。Apache と LDAP の間を観測者のパスワードが平文で流れる。LDAPS か StartTLS にできるかを LDAP の管理者に確かめる
 - LDAP の大文字・小文字: LDAP は区別せずにログインを通すが、`<group>` との比較は区別する（`Foo` でログインすると `foo` に入れない。入れないだけで、他人のものは見えない）
 - まだ: ダウンロードの速さの制限（`mod_ratelimit`）、Apache の優先度（`nice`・`ionice`）
 
@@ -251,3 +268,4 @@ journalctl -u sam45compat-lc -f        # ログ（「置き場所を読めた」
 | 2026-11-09 | 手順 5: submodule を取り、`testpaths` を足して試験が通った |
 | 2026-11-10 | bklog をマウントし、暫定 LC（`--fake`）で sam45psw の観測 2 つに反応することを確かめた。起動時の自動のマウントと起動（5.1）を足した |
 | 2026-11-10 | Apache を入れ、HTTPS・LDAP の Basic 認証・自分の `<group>` だけを通す設定（5.2）。外の計算機から、自分は見られ、他人と頭の一覧は 403 になることを確かめた |
+| 2026-11-10 | 公開の URL を `/download`（`/srv/download`）にし、頭を開くと自分のフォルダへ転送するようにした（5.2）。OS が 26.04.1 だったので記録を直した |
