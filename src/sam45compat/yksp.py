@@ -106,6 +106,7 @@ class L2Result:
     array: int
     valid: bool
     reason: str = ""
+    spec: Optional[np.ndarray] = None   # 書いたスペクトル（L2 の順。QL 用。ZERO・取れないときは None）
 
 
 class YkspBuilder:
@@ -164,7 +165,8 @@ class YkspBuilder:
             d.dtsys = self._update_tsys(idx, integ.scan_type, spec if valid else None)
             d.idmy_flag = 0 if valid else 1
             set_spectrum(d, np.zeros(sl.CHMAX_LOGGING) if spec is None else spec)
-            out.append(L2Result(rec, idx, valid, reason))
+            out.append(L2Result(rec, idx, valid, reason,
+                                None if integ.scan_type == SCAN_ZERO else spec))
         return out
 
     def _update_tsys(self, idx: int, scan: str, spec) -> float:

@@ -110,7 +110,7 @@ python3 tools/replay.py <SAM45 のロギング> <log_dir> --speed 60 --log-id 20
 45m の本番では、bklog を読み `/home/yk/bklog` の下に書く（`config/bklog.json`。ボードなしの試しは `config/bklog-dummy.json` と `--fake`）。
 観測が終わったら、YKSP のロギングを `/srv/download/<group>/<project>/logging/` に移し、別の計算機で ssh 越しにマージして
 観測生データ（YKSP）を作り、`otf/`・`psw/` に移す（設定の `deliver_root`・`merge_cmd`・`merge_root`。`docs/design/data-delivery.md`）。
-設定の `status_path` があれば、暫定 LC と RFSoC の状態を 1 秒ごとに JSON に書き、Apache で所内 LAN に見せる（`tools/status/index.html`。`docs/design/status-page.md`）。
+設定の `status_path` があれば、暫定 LC と RFSoC の状態を 1 秒ごとに JSON に書き、Apache で所内 LAN に見せる（`tools/status/index.html`。`docs/design/status-page.md`）。`ql_path` があれば、窓ごとのスペクトル（直近 1 秒の生と、積分ごとの Ta*）も書き、`/ql/` で見せる（`tools/ql/index.html`）。
 `--fake` を外すと、設定の `board`（specd の宛先・ポート・bit の名前・一時ファイルの置き場所）の実機につなぐ。
 ボードが無くても、YATSUGATAKE の specd を PL なしで起こせば相手にできる（試験 `tests/test_board.py` もこれを使う）:
 

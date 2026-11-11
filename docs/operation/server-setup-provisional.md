@@ -317,10 +317,12 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
    サービスのファイルが古ければ、5.1 の「サービスのファイルを直したとき」で写し直す:
 
    ```sh
-   sudo install -d -o yk -g yk -m 755 /var/www/html/status
+   sudo install -d -o yk -g yk -m 755 /var/www/html/status /var/www/html/ql
    sudo systemctl restart sam45compat-lc
-   ls -l /var/www/html/status/            # index.html と status.json（yk のもの）
+   ls -l /var/www/html/status/ /var/www/html/ql/     # index.html と status.json・ql.json（yk のもの）
    ```
+
+   QL（`/ql/`、2026-11-11）も同じ形: LC が `/var/www/html/ql/ql.json` を書き（設定の `ql_path`）、サービスが `tools/ql/index.html` を写す。
 
    `/var/www/html/status/` の中にシンボリックリンクは置かない（Apache は `-FollowSymLinks` でたどらず、
    www-data は `/home/yk` の中を読めない）
@@ -343,6 +345,7 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
    H=http://<サーバー>
    curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' $H/       # 302 → $H/status/
    curl -s -o /dev/null -w '%{http_code}\n' $H/status/                 # 200（index.html）
+   curl -s -o /dev/null -w '%{http_code}\n' $H/ql/                     # 200（QL）
    curl -s -D - -o /dev/null $H/status/status.json | grep -i cache-control    # no-store
    curl -s -o /dev/null -w '%{http_code}\n' $H/status/status.json.tmp  # 403 か 404
    curl -s -o /dev/null -w '%{http_code}\n' $H/index.html              # 403（/var/www/html のほかのものは出さない）
@@ -476,4 +479,5 @@ specd が起きていない観測は「分光計の準備に失敗」として�
 | 2026-11-11 | 状態のページの手順（5.4）を書いた（まだ仮機に入れていない） |
 | 2026-11-11 | 暫定 LC のサービスが起こすたびに状態のページの `index.html` を写すようにした。サービスのファイルを直したときの手順（5.1）を足した |
 | 2026-11-11 | RFSoC のボードの状態の常駐（5.5）の手順を書いた（まだボードに入れていない） |
+| 2026-11-11 | QL（`/ql/`）を 5.4 に足した。`/var/www/html/ql` を作り、Apache の設定に `/var/www/html/ql` を足す |
 | 2026-11-11 | RFSoC 4x2 をつないだ。yk の ssh の鍵、ボードの specd のサービスと sudoers（5.6）。暫定 LC を実機（`board.no_pps`、1PPS・10 MHz なし）で動かした |

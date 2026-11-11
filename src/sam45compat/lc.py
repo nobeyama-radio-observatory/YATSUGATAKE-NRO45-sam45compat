@@ -8,6 +8,7 @@ SAM45 のロギングの置き場所を見回り、観測ごとに:
 4. ED を読んだら、残りを書いて ED を書き、分光計を終える
 5. deliver_root があれば、別スレッドで YKSP のロギングを配信の置き場所に移し、マージして観測生データを振り分ける（deliver.py）
 6. status_path があれば、別スレッドで LC とボードの状態を JSON に書く（status.py。Apache で配る状態のページ）
+7. ql_path があれば、別スレッドで窓ごとのスペクトル（生・積分ごとの Ta*）を JSON に書く（ql.py。Apache で配る QL）
 
 出力は設定の output で選ぶ:
 - "separate"（使うのはこちら）: YKSP のロギングを別のファイルに書く。肩代わりする Array だけの L1。
@@ -101,6 +102,11 @@ class LcConfig:
     status_path: Optional[str] = None
     status_s: float = 1.0                         # JSON を書き直す間隔
     status_board_s: float = 1.0                   # specd に STATUS を問い合わせる間隔（取得に響くなら延ばす）
+    # QL（ql.py）。None なら書かない。45m の仮機では /var/www/html/ql/ql.json
+    ql_path: Optional[str] = None
+    ql_s: float = 1.0                             # JSON を書き直す間隔
+    ql_avg_s: float = 1.0                         # 生のスペクトルを平均する長さ（直近の何秒か）
+    ql_nbin: int = 1024                           # 4096 ch を何点に減らすか（4096 の約数）
 
     @classmethod
     def from_json(cls, path: str) -> "LcConfig":
@@ -163,6 +169,7 @@ class Session:
         self.phase = "L1 待ち"          # L1 待ち / 準備中 / 記録中 / 準備に失敗 / 終わり / 手を引いた
         self.t_start = time.time()
         self.t_last_l2: Optional[float] = None
+        self.ql = None                  # 積分ごとの Ta*（ql.IntegrationQl。ql_path があるとき）
 
     def info(self) -> Dict[str, object]:
         """状態のページに出す、この観測のようす（別のスレッドから読む。値はおおよそ）。"""
@@ -251,6 +258,9 @@ class Session:
         else:
             self.phase = "記録中"         # 肩代わりの Array が無い観測（全部 idmy_flag = 1 で書く）
         self.builder.dumps = self.spec.dumps()
+        if cfg.ql_path and self.builder.plan.windows:
+            from .ql import IntegrationQl
+            self.ql = IntegrationQl(self.name.log_id, self.builder.plan, cfg.ql_nbin)
 
     def _flush_pending(self, now: float, final: bool) -> None:
         if self.builder is None:
@@ -264,6 +274,11 @@ class Session:
             self.pending.pop(0)
             res = self.builder.integration(p.integ)
             self._check_notime()
+            if self.ql is not None:
+                try:
+                    self.ql.add(p.integ.scan_type, p.integ.key[0], res)
+                except Exception as e:      # 表示用なので、失敗しても書き続ける
+                    log.error("%s: QL の Ta* を作れない: %s", self.name.log_id, e)
             if self.combined:
                 self._write(cb.merge_integration(p.integ.records, {r.array: r.record for r in res}))
             else:
@@ -390,6 +405,7 @@ class LC:
         self.seen = set()
         self.deliverer: Optional[dv.Deliverer] = None
         self.recent = deque(maxlen=10)  # 終わった観測（状態のページ用）
+        self.ql_last = None             # 終わった観測の最後の Ta*（QL 用）
         if cfg.deliver_root:
             if cfg.output != "separate":
                 raise ValueError("deliver_root は output が separate のときだけ")
@@ -408,8 +424,15 @@ class LC:
             from .status import StatusWriter
             self.status_writer = StatusWriter(self, cfg.status_path, cfg.status_s, cfg.status_board_s)
             self.status_writer.start()
+        self.ql_writer = None
+        if cfg.ql_path:
+            from .ql import QlWriter
+            self.ql_writer = QlWriter(self, cfg.ql_path, cfg.ql_s, cfg.ql_avg_s, cfg.ql_nbin)
+            self.ql_writer.start()
 
     def _ended(self, s: "Session", failed: Optional[str] = None) -> None:
+        if s.ql is not None and s.ql.n_on:
+            self.ql_last = s.ql
         d = s.info()
         d["t_end"] = time.time()
         if failed:
@@ -498,6 +521,8 @@ class LC:
         self._hb_stop.set()
         if self.status_writer is not None:
             self.status_writer.stop()
+        if self.ql_writer is not None:
+            self.ql_writer.stop()
         for s in self.sessions.values():
             s.close()
         if self.deliverer is not None:

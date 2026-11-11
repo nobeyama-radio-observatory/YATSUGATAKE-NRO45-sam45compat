@@ -19,6 +19,7 @@ Environment=PYTHONUNBUFFERED=1
 # 状態のページ（5.4）: 起こすたびにページをリポジトリの版で写す（git pull の後の起こし直しで新しくなる）。
 # 頭の - で、写せなくても（/var/www/html/status が無いなど）LC は起こす
 ExecStartPre=-/usr/bin/install -m 644 tools/status/index.html /var/www/html/status/index.html
+ExecStartPre=-/usr/bin/install -m 644 tools/ql/index.html /var/www/html/ql/index.html
 ExecStart=/home/yk/YATSUGATAKE-NRO45-sam45compat/.venv/bin/python3 -m sam45compat.lc --config config/bklog-dummy.json --fake
 Restart=always
 RestartSec=10
