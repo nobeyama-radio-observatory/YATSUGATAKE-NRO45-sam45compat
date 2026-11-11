@@ -1,0 +1,286 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: BSD-3-Clause -->
+<!-- 暫定 LC と RFSoC の状態のページ。同じ場所の status.json（src/sam45compat/status.py が書く）を 1 秒ごとに読む。
+     置き方は docs/operation/server-setup-provisional.md の 5.4。外のライブラリは使わない。 -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YKSP 状態</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #fff; --fg: #1d2330; --mute: #6b7280; --line: #e3e6eb;
+  --ok: #18794e; --ok-bg: #e6f6ee; --warn: #9a6700; --warn-bg: #fff4d6; --bad: #b42318; --bad-bg: #fde8e7;
+  --idle: #4b5563; --idle-bg: #eef0f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --card: #1b1f27; --fg: #e6e8ec; --mute: #9aa3b2; --line: #2c323d;
+    --ok: #4ade80; --ok-bg: #12301f; --warn: #fbbf24; --warn-bg: #352a0c; --bad: #f87171; --bad-bg: #3a1514;
+    --idle: #aab2c0; --idle-bg: #252a33;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+header { position: sticky; top: 0; z-index: 1; padding: 10px 16px; display: flex; gap: 12px; align-items: center;
+  flex-wrap: wrap; border-bottom: 1px solid var(--line); background: var(--card); }
+header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+#banner { padding: 3px 10px; border-radius: 999px; font-weight: 600; }
+#age { color: var(--mute); font-variant-numeric: tabular-nums; }
+main { padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+  max-width: 1400px; margin: 0 auto; }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+section.wide { grid-column: 1 / -1; }
+h2 { font-size: 14px; margin: 0 0 8px; display: flex; gap: 8px; align-items: center; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--mute); font-weight: 500; white-space: nowrap; }
+tr:last-child td, tr:last-child th { border-bottom: 0; }
+.scroll { overflow-x: auto; }
+.tag { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ok { color: var(--ok); background: var(--ok-bg); }
+.warn { color: var(--warn); background: var(--warn-bg); }
+.bad { color: var(--bad); background: var(--bad-bg); }
+.idle { color: var(--idle); background: var(--idle-bg); }
+td.ok, td.warn, td.bad { background: none; font-weight: 600; }
+.mute { color: var(--mute); }
+.adc { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 6px 0 10px; }
+.adc div { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.adc b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+.adc span { color: var(--mute); font-size: 12px; }
+ul { margin: 0; padding-left: 18px; }
+code { font-size: 12px; }
+body.stale main { opacity: .45; }
+footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>YKSP（暫定 LC・RFSoC）の状態</h1>
+  <span id="banner" class="idle">読み込み中</span>
+  <span id="age"></span>
+</header>
+<main>
+  <section><h2>暫定 LC <span id="lc-tag"></span></h2><div id="lc"></div></section>
+  <section><h2>RFSoC（specd）<span id="bd-tag"></span></h2><div id="bd"></div></section>
+  <section class="wide"><h2>今の観測</h2><div id="obs" class="scroll"></div></section>
+  <section class="wide"><h2>終わった観測（新しい順）</h2><div id="recent" class="scroll"></div></section>
+  <section><h2>配信・マージ</h2><div id="dl"></div></section>
+  <section><h2>ディスク</h2><div id="disk"></div></section>
+  <section class="wide"><h2>通知（新しい順）</h2><div id="notices"></div></section>
+</main>
+<footer>1 秒ごとに status.json を読む。LC が書いた時刻が <span id="stale-s"></span> 秒より古ければ「LC が止まった」とする。</footer>
+<script>
+"use strict";
+const STALE_S = 5;            // これより古い status.json は「LC が止まった」
+const BOARD_STALE_S = 10;     // ボードの値がこれより古ければ注意（LOAD 中など）
+const LOOP_WARN_S = 150;      // 本体の 1 周の止まり（LOAD は最大 120 s）
+document.getElementById("stale-s").textContent = STALE_S;
+
+const $ = (id) => document.getElementById(id);
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v; else if (k === "title") e.title = v; else e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k instanceof Node ? k : String(k));
+  return e;
+}
+const tag = (cls, text) => el("span", { class: "tag " + cls }, text);
+const pad = (n) => String(n).padStart(2, "0");
+function hms(t) { if (!t) return "-"; const d = new Date(t * 1000); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
+function mdhms(t) { if (!t) return "-"; const d = new Date(t * 1000); return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${hms(t)}`; }
+function dur(s) {
+  if (s == null || !isFinite(s)) return "-";
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + " 秒";
+  if (s < 3600) return Math.floor(s / 60) + " 分 " + (s % 60) + " 秒";
+  if (s < 86400) return Math.floor(s / 3600) + " 時間 " + Math.floor(s % 3600 / 60) + " 分";
+  return Math.floor(s / 86400) + " 日 " + Math.floor(s % 86400 / 3600) + " 時間";
+}
+function kvTable(rows) {
+  return el("table", {}, rows.filter(Boolean).map(([k, v, cls]) =>
+    el("tr", {}, el("th", {}, k), el("td", cls ? { class: cls } : {}, v))));
+}
+function grid(head, rows) {
+  return el("table", {}, el("tr", {}, head.map((h) => el("th", {}, h))),
+    rows.map((r) => el("tr", {}, r.map((c) => c instanceof Node ? el("td", {}, c) : el("td", {}, c ?? "-")))));
+}
+const list = (s) => (s == null || s === "" ? [] : String(s).split(","));
+const zero = (v) => v == null || v === "-" || v === "" || Number(v) === 0;
+
+const PHASE = { "記録中": "ok", "準備中": "warn", "L1 待ち": "idle", "終わり": "ok",
+  "準備に失敗": "bad", "失敗": "bad", "手を引いた": "warn" };
+const phaseTag = (p) => tag(PHASE[p] || "idle", p || "-");
+
+function renderLC(d, now) {
+  const lc = d.lc || {};
+  if (lc.error) { $("lc").replaceChildren(el("p", { class: "bad" }, "LC の状態を作れない: " + lc.error)); return "bad"; }
+  const loopBad = lc.loop_age_s > LOOP_WARN_S;
+  const unread = (lc.dirs || []).filter((x) => !x.readable);
+  $("lc").replaceChildren(kvTable([
+    ["計算機", `${d.host}（pid ${d.pid}）`],
+    ["動いている時間", dur(now - d.started)],
+    ["本体の 1 周", lc.loop_age_s + " 秒前", loopBad ? "bad" : null],
+    ["出力", lc.output],
+    ["見回る置き場所", el("ul", {}, (lc.dirs || []).map((x) =>
+      el("li", {}, el("code", {}, x.in), " → ", el("code", {}, x.out), ` (${x.kind || "-"}) `,
+        x.readable ? null : tag("bad", "読めない"))))],
+  ]));
+  return loopBad || unread.length ? "bad" : "ok";
+}
+
+function renderObs(lc, now) {
+  const ss = lc.sessions || [];
+  if (!ss.length) { $("obs").replaceChildren(el("p", { class: "mute" }, "観測していない（SAM45 の新しいロギングを待っている）")); return "ok"; }
+  $("obs").replaceChildren(grid(
+    ["ログ ID", "種類", "状態", "bit", "肩代わり", "L2", "無効", "束ね待ち", "最後の L2", "始まり", "時刻なし"],
+    ss.map((s) => [s.log_id, s.kind, phaseTag(s.phase), s.bit,
+      s.arrays.join(" ") + (Object.keys(s.skipped || {}).length ? `（取らない ${Object.keys(s.skipped).join(" ")}）` : ""),
+      s.n_l2, s.n_invalid ? tag("warn", s.n_invalid) : 0, s.pending,
+      s.t_last_l2 ? dur(now - s.t_last_l2) + "前" : "-", mdhms(s.t_start),
+      s.notime ? tag("bad", s.notime) : 0])));
+  if (ss.some((s) => PHASE[s.phase] === "bad" || s.notime)) return "bad";
+  if (ss.some((s) => s.n_invalid)) return "warn";
+  return "ok";
+}
+
+function renderRecent(lc) {
+  const rs = lc.recent || [];
+  if (!rs.length) { $("recent").replaceChildren(el("p", { class: "mute" }, "LC を起こしてから、まだ無い")); return; }
+  $("recent").replaceChildren(grid(["ログ ID", "種類", "結果", "bit", "L2", "無効", "始まり", "終わり", ""],
+    rs.map((s) => [s.log_id, s.kind, phaseTag(s.phase), s.bit, s.n_l2, s.n_invalid ? tag("warn", s.n_invalid) : 0,
+      mdhms(s.t_start), mdhms(s.t_end), s.error ? el("code", {}, s.error) : ""])));
+}
+
+function renderDeliver(lc) {
+  const dl = lc.deliver;
+  if (!dl) { $("dl").replaceChildren(el("p", { class: "mute" }, "配信しない設定（deliver_root なし）")); return; }
+  $("dl").replaceChildren(kvTable([
+    ["処理中", dl.current || "なし"],
+    ["待ち", dl.queued, dl.queued > 2 ? "warn" : null],
+    ["マージ", dl.merge ? "する" : "しない（設定なし）"],
+    ["最近移したもの", dl.done.length ? el("ul", {}, dl.done.slice().reverse().map((x) => el("li", {}, el("code", {}, x)))) : "-"],
+  ]));
+}
+
+function renderDisk(lc) {
+  const ds = (lc.disks || []).filter(Boolean);
+  $("disk").replaceChildren(grid(["場所", "空き", "使用"], ds.map((x) => x.error
+    ? [el("code", {}, x.path), tag("bad", "読めない"), x.error]
+    : [el("code", {}, x.path), `${x.free_gb} GB / ${x.total_gb} GB`,
+      tag(x.used_pct > 95 ? "bad" : x.used_pct > 85 ? "warn" : "ok", x.used_pct + " %")])));
+  return ds.some((x) => x.error || x.used_pct > 95) ? "bad" : ds.some((x) => x.used_pct > 85) ? "warn" : "ok";
+}
+
+function renderNotices(lc) {
+  const ns = (lc.notices || []).slice().reverse();
+  $("notices").replaceChildren(ns.length
+    ? grid(["時刻", "件名"], ns.map((n) => [mdhms(n.t), n.subject]))
+    : el("p", { class: "mute" }, "LC を起こしてから、まだ無い"));
+}
+
+// specd の STATUS（docs: external/YATSUGATAKE/docs/user/specd.md の「STATUS の見方」）
+const ZERO_KEYS = ["miss", "kgap", "drop", "tp_lost", "tp_bad", "tp_ovr", "sat", "pl_drop", "pl_crc", "pl_err", "bdrop", "r_bad"];
+function renderBoard(b, now) {
+  if (b.mode === "fake") { $("bd").replaceChildren(el("p", {}, tag("warn", "模擬"), " LC は --fake（ダミーのスペクトル）で動いている")); return ["warn", "模擬"]; }
+  const st = b.status;
+  const age = b.t_ok ? now - b.t_ok : Infinity;
+  const head = [];
+  let level = "ok", label = "";
+  if (b.error) {
+    level = "bad"; label = "応答なし";
+    head.push(el("p", { class: "bad" }, `問い合わせに失敗: ${b.error}`, b.t_ok ? `（下は ${dur(age)}前の値）` : ""));
+  } else if (b.busy) {
+    if (age > BOARD_STALE_S) level = "warn";
+    label = "LC が使用中";
+    head.push(el("p", { class: "mute" }, `LC が制御の口を使っている（LOAD など）。下は ${dur(age)}前の値`));
+  }
+  if (!st) { $("bd").replaceChildren(...head, el("p", { class: "mute" }, "まだ取れていない")); return [level === "ok" ? "warn" : level, label || "未取得"]; }
+
+  const state = st.state;
+  const stCls = state === "RUN" ? "ok" : state === "ERROR" ? "bad" : state === "ARMED" ? "warn" : "idle";
+  if (state === "ERROR") level = "bad";
+  const timeOk = st.time_ok === "1" || st.time_ok === "True";
+  if (!timeOk && level !== "bad") level = "warn";
+  const nonzero = ZERO_KEYS.filter((k) => k in st && !zero(st[k]));
+  if (nonzero.length && level === "ok") level = "warn";
+  const health = st.health && st.health !== "0x0000";
+  if (health && level === "ok") level = "warn";
+
+  const dbfs = list(st.tp_dbfs), dbm = list(st.tp_dbm);
+  const adc = el("div", { class: "adc" }, ["A", "B", "C", "D"].map((a, i) => el("div", {},
+    el("span", {}, "ADC_" + a), el("b", {}, dbm[i] && dbm[i] !== "-" ? dbm[i] + " dBm" : (dbfs[i] && dbfs[i] !== "-" ? dbfs[i] + " dBFS" : "-")),
+    el("span", {}, dbm[i] && dbm[i] !== "-" && dbfs[i] ? dbfs[i] + " dBFS" : ""))));
+  const rec = b.recorder || {};
+  $("bd").replaceChildren(...head, el("h2", {}, "ADC の入力（TP）"), adc, kvTable([
+    ["状態", tag(stCls, state)],
+    ["時刻（1PPS）", timeOk ? tag("ok", "OK") : tag(st.forced === "1" ? "warn" : "bad", "答えられない" + (st.time_err ? `（${st.time_err}）` : ""))],
+    ["ダンプ", st.dumps],
+    ["0 でない数", nonzero.length ? el("span", {}, nonzero.map((k) => tag("warn", `${k}=${st[k]}`)), "") : tag("ok", "なし")],
+    ["health・flags", `${st.health} ・ ${st.flags}`, health ? "warn" : null],
+    ["読み出しの 1 周", `最大 ${st.loop_max_ms} ms ・ p99 ${st.loop_p99_ms} ms`],
+    ["溜まり", `${st.buf_used_mb} / ${st.buf_cap_mb} MB`, Number(st.buf_used_mb) > 0.5 * Number(st.buf_cap_mb) ? "warn" : null],
+    ["送信", `${st.send} → ${st.data_client}（送った ${st.sent}）`],
+    ["受け側（LC）", rec.connected ? `つながっている（受けた ${rec.n_spec}）` : "つながっていない", rec.connected ? null : "warn"],
+    ["値の時刻", b.t_ok ? `${hms(b.t_ok)}（${dur(age)}前）` : "-", age > BOARD_STALE_S ? "warn" : null],
+  ]));
+  return [level, label || state];
+}
+
+const RANK = { ok: 0, idle: 0, warn: 1, bad: 2 };
+const worst = (...ls) => ls.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), "ok");
+const BANNER = { ok: "正常", warn: "注意", bad: "異常" };
+
+let last = null, fetchErr = null;
+async function load() {
+  try {
+    const r = await fetch("status.json?" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    last = await r.json();
+    fetchErr = null;
+  } catch (e) {
+    fetchErr = e.message || String(e);
+  }
+  render();
+}
+
+function render() {
+  const now = Date.now() / 1000;
+  const banner = $("banner"), ageEl = $("age");
+  if (!last) {
+    document.body.classList.add("stale");
+    banner.className = "bad"; banner.textContent = "status.json を読めない";
+    ageEl.textContent = fetchErr || ""; return;
+  }
+  const age = now - last.t;
+  ageEl.textContent = `更新 ${hms(last.t)}（${age.toFixed(1)} 秒前）` + (fetchErr ? ` ・ 読み込み失敗: ${fetchErr}` : "");
+  const lcLevel = renderLC(last, now);
+  const lc = last.lc || {};
+  const obsLevel = lc.error ? "ok" : renderObs(lc, now);
+  if (!lc.error) { renderRecent(lc); renderDeliver(lc); renderNotices(lc); }
+  const diskLevel = lc.error ? "ok" : renderDisk(lc);
+  const [bdLevel, bdLabel] = renderBoard(last.board || {}, now);
+  $("bd-tag").replaceChildren(tag(bdLevel, bdLabel));
+
+  document.body.classList.toggle("stale", age > STALE_S);
+  if (age > STALE_S) {
+    $("lc-tag").replaceChildren(tag("bad", "止まった"));
+    banner.className = "bad";
+    banner.textContent = `暫定 LC が止まった（${dur(age)}更新なし。下は止まる前の値）`;
+    document.title = "✕ YKSP 状態";
+    return;
+  }
+  $("lc-tag").replaceChildren(tag(lcLevel, lcLevel === "ok" ? "動いている" : "異常"));
+  const lv = worst(lcLevel, obsLevel, diskLevel, bdLevel);
+  banner.className = lv;
+  banner.textContent = BANNER[lv];
+  document.title = (lv === "ok" ? "" : lv === "warn" ? "△ " : "✕ ") + "YKSP 状態";
+}
+
+load();
+setInterval(load, 1000);
+</script>
+</body>
+</html>

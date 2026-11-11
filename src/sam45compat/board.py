@@ -4,6 +4,9 @@
 制御の口（テキスト、1 接続まで）は命令のたびにつないで切る。データの口は Recorder がつなぎっぱなしにする。
 観測ごとに: STOP（動いていれば）→ LOAD（bit が違うときだけ）→ SET → CLEAR → START → SEND ON。
 終わったら STOP し、一時ファイルを消す。
+
+制御の口は同時に 1 接続だけ（specd が 2 つ目を ERR BUSY で断る）。この中の命令（準備・終わり・状態の問い合わせ）は
+1 つのロックで順番にし、状態のページ（status.py）の問い合わせが観測の準備とぶつからないようにする。
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -77,6 +81,7 @@ class BoardSpectrometer:
         self.recorder.start()
         self.store: Optional[DiskDumps] = None
         self.commands: List[str] = []      # 送った命令（試験と調べ用）
+        self._lock = threading.Lock()      # 制御の口（1 接続まで）を使う命令を順番にする
 
     def _ctl(self, timeout: float = 60.0) -> Control:
         return Control(self.cfg.host, self.cfg.ctl_port, timeout)
@@ -86,6 +91,10 @@ class BoardSpectrometer:
         return c.ok(line)
 
     def prepare(self, plan: mp.Plan, log_id: str) -> None:
+        with self._lock:
+            self._prepare(plan, log_id)
+
+    def _prepare(self, plan: mp.Plan, log_id: str) -> None:
         if plan.kind not in self.cfg.bits:
             raise SpecdError(f"bit の種類 {plan.kind!r} の名前が設定に無い")
         want = self.cfg.bits[plan.kind]
@@ -119,6 +128,10 @@ class BoardSpectrometer:
             c.close()
 
     def finish(self, log_id: str) -> None:
+        with self._lock:
+            self._finish(log_id)
+
+    def _finish(self, log_id: str) -> None:
         try:
             c = self._ctl()
             try:
@@ -137,12 +150,34 @@ class BoardSpectrometer:
     def dumps(self):
         return self.store if self.store is not None else _Empty()
 
-    def status(self) -> Dict[str, str]:
-        c = self._ctl()
+    def status(self, timeout: float = 60.0) -> Dict[str, str]:
+        with self._lock:
+            return self._status(timeout)
+
+    def _status(self, timeout: float) -> Dict[str, str]:
+        c = self._ctl(timeout)
         try:
             return c.ok("STATUS")
         finally:
             c.close()
+
+    def status_nowait(self, timeout: float = 2.0) -> Optional[Dict[str, str]]:
+        """状態のページ用。ほかの命令（LOAD など）が制御の口を使っていれば、待たずに None を返す。
+        つながらない・ERR（人が specctl でつないでいると ERR BUSY）なら例外。"""
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            return self._status(timeout)
+        finally:
+            self._lock.release()
+
+    def recorder_info(self) -> Dict[str, object]:
+        """データの口の受け側（状態のページ用）。"""
+        r = self.recorder
+        st = self.store
+        return {"connected": r.connected, "n_spec": r.n_spec, "n_drop_events": r.n_drop_events,
+                "store": st is not None, "n_notime": st.n_notime if st is not None else 0,
+                "n_axis_bad": st.n_axis_bad if st is not None else 0}
 
     def close(self) -> None:
         self._close_store()

@@ -86,6 +86,7 @@ class Deliverer:
         self.notify = notify or Notifier()
         self.merge_timeout_s = merge_timeout_s
         self.done: List[str] = []           # 試験で見る（移した先のパス）
+        self.current: Optional[str] = None  # 今処理しているロギングの名前（状態のページ用）
         self._q: "queue.Queue[Optional[Job]]" = queue.Queue()
         self._thread = None
         if background:
@@ -111,11 +112,18 @@ class Deliverer:
             job = self._q.get()
             if job is None:
                 return
+            self.current = os.path.basename(job.logging_path)
             try:
                 self.process(job)
             except Exception as e:          # 1 つの失敗で止めない
                 log.exception("%s の後の処理に失敗", job.logging_path)
                 self.notify(f"{os.path.basename(job.logging_path)}: 観測の後の処理に失敗", repr(e))
+            finally:
+                self.current = None
+
+    def queued(self) -> int:
+        """待っている数（処理中のものは含まない）。"""
+        return self._q.qsize()
 
     # ---- 1 観測 ----
 

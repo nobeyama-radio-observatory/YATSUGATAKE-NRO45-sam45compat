@@ -289,6 +289,44 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
 
 - まだ: `/srv/download` を別のディスク（ZFS）にしたら、`systemctl edit nfs-server` で `RequiresMountsFor=/srv/download` を足す（ストレージより先に空のフォルダを公開しない）
 
+### 5.4 状態のページ（Apache。2026-11-11）
+
+暫定 LC と RFSoC の状態を、所内 LAN から認証なしで見せる（[`../design/status-page.md`](../design/status-page.md)）。
+暫定 LC が `/var/www/html/status/status.json` を 1 秒ごとに書き、Apache が `http://<サーバー>/status/` で配る。
+
+1. 置き場所を作り、ページを置く（ページを直したら、写し直す）:
+
+   ```sh
+   sudo install -d -o yk -g yk -m 755 /var/www/html/status
+   sudo install -o yk -g yk -m 644 tools/status/index.html /var/www/html/status/index.html
+   ```
+
+2. 暫定 LC の設定に `status_path`（`/var/www/html/status/status.json`）を入れ、起こし直す（`config/bklog.json`・`config/bklog-dummy.json` には入っている）。
+   `ls -l --time-style=+%T /var/www/html/status/` で `status.json` の時刻が毎秒進むことを確かめる
+3. 待ち受けを足す。`/etc/apache2/ports.conf` に `Listen <所内 LAN 側の IP>:80` を足す
+   （今の `Listen 127.0.0.1:80` は残す）。ファイアウォール: （記入: 80 番を所内 LAN にだけ開けたか）
+4. [`tools/apache/yksp-status.conf`](../../tools/apache/yksp-status.conf) を `/etc/apache2/sites-available/yksp-status.conf` に写し、`<...>` を埋めて有効にする:
+
+   ```sh
+   sudo a2enmod headers
+   sudo a2ensite yksp-status
+   sudo apache2ctl configtest && sudo systemctl reload apache2
+   ```
+
+5. 所内 LAN のほかの計算機から確かめる:
+
+   ```sh
+   H=http://<サーバー>
+   curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' $H/       # 302 → $H/status/
+   curl -s -o /dev/null -w '%{http_code}\n' $H/status/                 # 200（index.html）
+   curl -s -D - -o /dev/null $H/status/status.json | grep -i cache-control    # no-store
+   curl -s -o /dev/null -w '%{http_code}\n' $H/status/status.json.tmp  # 403 か 404
+   curl -s -o /dev/null -w '%{http_code}\n' $H/index.html              # 403（/var/www/html のほかのものは出さない）
+   curl -s -o /dev/null -w '%{http_code}\n' $H/download/               # 403 か 404（こちらの口からは配信を出さない）
+   ```
+
+   ブラウザで開き、`sudo systemctl stop sam45compat-lc` で 5 秒後に「暫定 LC が止まった」になり、`start` で戻ることを見る。
+
 ## 6. まだやらないこと
 
 - **COSMOS のネットワークへの接続と、SAM45 のロギングのマウント**は、SAM45 の運用に影響しうるので、
@@ -314,3 +352,4 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
 | 2026-11-10 | Apache を入れ、HTTPS・LDAP の Basic 認証・自分の `<group>` だけを通す設定（5.2）。外の計算機から、自分は見られ、他人と頭の一覧は 403 になることを確かめた |
 | 2026-11-10 | 公開の URL を `/download`（`/srv/download`）にし、頭を開くと自分のフォルダへ転送するようにした（5.2）。OS が 26.04.1 だったので記録を直した |
 | 2026-11-11 | マージの計算機に `/srv/download` を NFS で公開し、yk のマージ専用の ssh の鍵を登録した（5.3）。`authorized_keys` に `from=`・`restrict` を入れた。マウントして書き込めること、ssh で入れることを確かめた |
+| 2026-11-11 | 状態のページの手順（5.4）を書いた（まだ仮機に入れていない） |

@@ -95,6 +95,24 @@ class TestBoardFake(unittest.TestCase):
         self.spec.finish("20261106000001")
         self.assertFalse(os.path.exists(path))               # 一時ファイルは消える
 
+    def test_3_status_nowait(self):
+        """状態のページの問い合わせ: LC の命令が制御の口を使っている間は待たずに飛ばす。人がつないでいれば ERR BUSY。"""
+        from sam45compat.board import Control, SpecdError
+        st = self.spec.status_nowait()
+        self.assertIn(st["state"], ("IDLE", "RUN", "ARMED"))
+        self.assertIn("tp_dbm", st)
+        with self.spec._lock:
+            self.assertIsNone(self.spec.status_nowait())
+        c = Control("127.0.0.1", self.cport)       # ほかの人の接続（specctl など）
+        try:
+            with self.assertRaises(SpecdError):
+                self.spec.status_nowait()
+        finally:
+            c.close()
+        self.assertIsNotNone(self.spec.status_nowait())
+        info = self.spec.recorder_info()
+        self.assertIn("connected", info)
+
     def test_2_lc_end_to_end(self):
         """暫定 LC ＋ specd --fake: 今の時刻の積分を持つ SAM45 のロギングを、積分が終わるたびに書き足す。"""
         with tempfile.TemporaryDirectory() as d:

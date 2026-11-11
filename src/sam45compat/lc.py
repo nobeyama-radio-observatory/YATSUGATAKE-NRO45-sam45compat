@@ -7,6 +7,7 @@ SAM45 のロギングの置き場所を見回り、観測ごとに:
 3. SAM45 の L2 を積分ごとにまとめ、ダンプが届いたら束ねて YKSP の L2 を書く
 4. ED を読んだら、残りを書いて ED を書き、分光計を終える
 5. deliver_root があれば、別スレッドで YKSP のロギングを配信の置き場所に移し、マージして観測生データを振り分ける（deliver.py）
+6. status_path があれば、別スレッドで LC とボードの状態を JSON に書く（status.py。Apache で配る状態のページ）
 
 出力は設定の output で選ぶ:
 - "separate"（使うのはこちら）: YKSP のロギングを別のファイルに書く。肩代わりする Array だけの L1。
@@ -28,6 +29,7 @@ import logging
 import os
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Protocol, Union
 
@@ -93,6 +95,10 @@ class LcConfig:
     merge_cmd: Optional[Union[List[str], Dict[str, List[str]]]] = None
     merge_root: Optional[str] = None              # マージの計算機から見た deliver_root（NFS のマウント先）
     merge_timeout_s: float = 3600.0
+    # 状態のページ（status.py）。None なら書かない。45m の仮機では /var/www/html/status/status.json
+    status_path: Optional[str] = None
+    status_s: float = 1.0                         # JSON を書き直す間隔
+    status_board_s: float = 1.0                   # specd に STATUS を問い合わせる間隔（取得に響くなら延ばす）
 
     @classmethod
     def from_json(cls, path: str) -> "LcConfig":
@@ -151,6 +157,22 @@ class Session:
         self.n_written = 0
         self.n_invalid = 0
         self.notime_noted = False
+        # 状態のページ用（status.py）
+        self.phase = "L1 待ち"          # L1 待ち / 準備中 / 記録中 / 準備に失敗 / 終わり / 手を引いた
+        self.t_start = time.time()
+        self.t_last_l2: Optional[float] = None
+
+    def info(self) -> Dict[str, object]:
+        """状態のページに出す、この観測のようす（別のスレッドから読む。値はおおよそ）。"""
+        b = self.builder
+        plan = b.plan if b is not None else None
+        return {"log_id": self.name.log_id, "file": os.path.basename(self.out_path), "kind": self.kind,
+                "phase": self.phase, "bit": plan.kind if plan is not None else None,
+                "arrays": [sl.array_label(i) for i in sorted(plan.windows)] if plan is not None else [],
+                "skipped": {sl.array_label(i): r for i, r in plan.skipped.items()} if plan is not None else {},
+                "n_l2": self.n_written, "n_invalid": self.n_invalid, "pending": len(self.pending),
+                "t_start": self.t_start, "t_last_l2": self.t_last_l2,
+                "notime": getattr(b.dumps, "n_notime", 0) if b is not None else 0}
 
     # ---- 1 周 ----
 
@@ -162,6 +184,7 @@ class Session:
             log.warning("%s: 見張りが受け持った。この観測から手を引く", self.name.log_id)
             self.notify(f"{self.name.log_id}: 見張りが素通しで受け持った", self.out_path)
             self.taken_over = True
+            self.phase = "手を引いた"
             self.done = True
             self.close()
             try:
@@ -213,12 +236,17 @@ class Session:
         self._out = open(self.out_path, "wb")
         self._write(self.builder.header(ctl, obs, only_targets=not self.combined))
         if plan.windows:
+            self.phase = "準備中"
             try:
                 self.spec.prepare(plan, self.name.log_id)
+                self.phase = "記録中"
             except Exception as e:
+                self.phase = "準備に失敗"
                 reason = f"分光計の準備に失敗: {e}"
                 self.notify(f"{self.name.log_id}: {reason}", "肩代わりする Array は idmy_flag = 1 で書く")
                 self.builder.plan = mp.Plan(kind=None, windows={}, skipped={i: reason for i in targets})
+        else:
+            self.phase = "記録中"         # 肩代わりの Array が無い観測（全部 idmy_flag = 1 で書く）
         self.builder.dumps = self.spec.dumps()
 
     def _flush_pending(self, now: float, final: bool) -> None:
@@ -262,6 +290,7 @@ class Session:
         self._write([self.builder.end()])
         self._out.close()
         self._out = None
+        self.phase = "終わり"
         self.done = True
         try:
             self.spec.finish(self.name.log_id)
@@ -282,7 +311,9 @@ class Session:
         self._check_marker()
         for r in recs:
             self._out.write(r.to_bytes())
-            self.n_written += r.kind == "L2"
+            if r.kind == "L2":
+                self.n_written += 1
+                self.t_last_l2 = time.time()
         self._out.flush()
 
     def close(self) -> None:
@@ -338,6 +369,7 @@ class LC:
         self._primed = set()            # 一度でも読めた置き場所（skip_existing の「既にある」を決めた）
         self.seen = set()
         self.deliverer: Optional[dv.Deliverer] = None
+        self.recent = deque(maxlen=10)  # 終わった観測（状態のページ用）
         if cfg.deliver_root:
             if cfg.output != "separate":
                 raise ValueError("deliver_root は output が separate のときだけ")
@@ -351,6 +383,19 @@ class LC:
         self._hb_stop = threading.Event()
         if cfg.heartbeat_path:
             threading.Thread(target=self._heartbeat, daemon=True, name="heartbeat").start()
+        self.status_writer = None
+        if cfg.status_path:
+            from .status import StatusWriter
+            self.status_writer = StatusWriter(self, cfg.status_path, cfg.status_s, cfg.status_board_s)
+            self.status_writer.start()
+
+    def _ended(self, s: "Session", failed: Optional[str] = None) -> None:
+        d = s.info()
+        d["t_end"] = time.time()
+        if failed:
+            d["phase"] = "失敗"
+            d["error"] = failed
+        self.recent.appendleft(d)
 
     def _heartbeat(self) -> None:
         """心拍のファイルを更新する。本体の 1 周が hang_s より長く止まっていたら更新しない（見張りに任せる）。"""
@@ -422,13 +467,17 @@ class LC:
                 log.exception("%s で失敗", n)
                 self.notify(f"{n}: 暫定 LC の処理に失敗", repr(e))
                 s.close()
+                self._ended(s, repr(e))
                 del self.sessions[n]
                 continue
             if s.done:
+                self._ended(s)
                 del self.sessions[n]
 
     def close(self) -> None:
         self._hb_stop.set()
+        if self.status_writer is not None:
+            self.status_writer.stop()
         for s in self.sessions.values():
             s.close()
         if self.deliverer is not None:

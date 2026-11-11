@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
+from collections import deque
 from typing import List, Optional, Sequence
 
 log = logging.getLogger("sam45compat")
@@ -15,10 +17,12 @@ class Notifier:
     def __init__(self, command: Optional[Sequence[str]] = None):
         self.command = list(command) if command else None
         self.sent: List[str] = []       # 試験で見る
+        self.recent = deque(maxlen=30)  # 状態のページ（status.py）に出す: (unix 秒, 件名)
 
     def __call__(self, subject: str, body: str = "") -> None:
         text = f"{subject}\n{body}".rstrip()
         self.sent.append(text)
+        self.recent.append((time.time(), subject))
         log.warning("通知: %s %s", subject, body)
         if self.command:
             try:

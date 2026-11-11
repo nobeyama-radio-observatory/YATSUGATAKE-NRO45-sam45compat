@@ -12,6 +12,9 @@
   "mirror": {"A05": "A01", "A06": "A02", "A07": "A03", "A08": "A04",
              "A21": "A17", "A22": "A18", "A23": "A19", "A24": "A20"},
   "poll_s": 1.0,
+  "status_path": "/var/www/html/status/status.json",
+  "status_s": 1.0,
+  "status_board_s": 1.0,
   "skip_existing": true,
   "deliver_root": "/srv/download",
   "merge_cmd": null
