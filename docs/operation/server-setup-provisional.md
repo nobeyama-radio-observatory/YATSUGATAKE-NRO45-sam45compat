@@ -245,6 +245,50 @@ journalctl -u sam45compat-lc -f        # ログ（「置き場所を読めた」
 - LDAP の大文字・小文字: LDAP は区別せずにログインを通すが、`<group>` との比較は区別する（`Foo` でログインすると `foo` に入れない。入れないだけで、他人のものは見えない）
 - まだ: ダウンロードの速さの制限（`mod_ratelimit`）、Apache の優先度（`nice`・`ionice`）
 
+### 5.3 マージの計算機に `/srv/download` を渡す（NFS と ssh。2026-11-11）
+
+マージは別の計算機（以下「マージの計算機」）で走る（[`../design/data-delivery.md`](../design/data-delivery.md) の「マージ」）。
+仮機は、マージの計算機と同じセグメント（管理者しか入れない）にも NIC を持つ。NFS と ssh はそちらを通す。
+
+**NFS の公開（仮機）**: マージの計算機のセグメントにだけ、読み書きで公開する。書き込みは全部 yk として扱う（`all_squash`）。
+
+```bash
+S=<マージの計算機のセグメント（例: 192.168.x.0/24）>
+U=$(id -u yk); G=$(id -g yk)
+
+sudo apt install nfs-kernel-server
+sudo mkdir -p /etc/exports.d            # 無いことがある。無いと tee が失敗し、何も公開されない
+echo "/srv/download  $S(rw,sync,no_subtree_check,all_squash,anonuid=$U,anongid=$G)" \
+  | sudo tee /etc/exports.d/yksp-merge.exports   # 名前は .exports で終わること
+sudo exportfs -ra
+sudo exportfs -v                        # 何も出なければ公開されていない
+sudo ufw allow from $S to any port 2049 proto tcp
+systemctl is-enabled nfs-server         # enabled なら再起動しても公開される
+```
+
+**マウント（マージの計算機）**: マウント先は `/cosmos3/45m/bklog/yksp`。`/etc/fstab`:
+
+```
+<仮機の管理者のセグメント側の名前か IP>:/srv/download  /cosmos3/45m/bklog/yksp  nfs4  vers=4.2,hard,noatime,_netdev,nofail,x-systemd.automount,x-systemd.mount-timeout=30  0 0
+```
+
+書き込めて、持ち主が yk の uid になることを `touch` と `ls -ln` で確かめる。
+
+**ssh の鍵（仮機の yk）**: 暫定 LC（`User=yk`）がパスワードなしで入れるよう、マージ専用の鍵を作る。
+
+```bash
+ssh-keygen -t ed25519 -N "" -C "yk@<仮機> sam45compat merge" -f ~/.ssh/id_ed25519_merge
+ssh-copy-id -i ~/.ssh/id_ed25519_merge.pub <user>@<マージ計算機>    # 1 回目はホストの鍵を yes で受け入れる（known_hosts に残す）
+ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hostname; ls /cosmos3/45m/bklog/yksp'
+```
+
+マージの計算機の `authorized_keys` では、この鍵の行の頭に `from="<仮機の管理者のセグメント側の IP>",restrict` を付ける。
+
+**暫定 LC の設定**: `config/bklog.json` の `merge_cmd`・`merge_root` を写し、`<...>` を埋める。実際のユーザー名・ホスト名・スクリプトの場所は、
+`config/*.local.json`（git に入らない）にだけ書く。
+
+- まだ: `/srv/download` を別のディスク（ZFS）にしたら、`systemctl edit nfs-server` で `RequiresMountsFor=/srv/download` を足す（ストレージより先に空のフォルダを公開しない）
+
 ## 6. まだやらないこと
 
 - **COSMOS のネットワークへの接続と、SAM45 のロギングのマウント**は、SAM45 の運用に影響しうるので、
@@ -269,3 +313,4 @@ journalctl -u sam45compat-lc -f        # ログ（「置き場所を読めた」
 | 2026-11-10 | bklog をマウントし、暫定 LC（`--fake`）で sam45psw の観測 2 つに反応することを確かめた。起動時の自動のマウントと起動（5.1）を足した |
 | 2026-11-10 | Apache を入れ、HTTPS・LDAP の Basic 認証・自分の `<group>` だけを通す設定（5.2）。外の計算機から、自分は見られ、他人と頭の一覧は 403 になることを確かめた |
 | 2026-11-10 | 公開の URL を `/download`（`/srv/download`）にし、頭を開くと自分のフォルダへ転送するようにした（5.2）。OS が 26.04.1 だったので記録を直した |
+| 2026-11-11 | マージの計算機に `/srv/download` を NFS で公開し、yk のマージ専用の ssh の鍵を登録した（5.3）。`authorized_keys` に `from=`・`restrict` を入れた。マウントして書き込めること、ssh で入れることを確かめた |

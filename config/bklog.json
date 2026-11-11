@@ -1,5 +1,5 @@
 {
-  "_comment": "45m の本番: bklog の SAM45 のロギングを読み、/home/yk/bklog の下に YKSP のロギングを書く（docs/design/standin-study.md の「方針の見直し」）。board.host・board.bits は実機に合わせる。観測の後、YKSP のロギング（とマージの出力）を /srv/download/<group>/<project>/ の logging/・psw/・otf/ に移す。merge_cmd はマージのソフトが届いたら書く。SAM45 のロギングに無い A05〜A08・A21〜A24 は mirror で A01〜A04・A17〜A20 の設定から作る",
+  "_comment": "45m の本番: bklog の SAM45 のロギングを読み、/home/yk/bklog の下に YKSP のロギングを書く（docs/design/standin-study.md の「方針の見直し」）。board.host・board.bits は実機に合わせる。観測の後、YKSP のロギングを /srv/download/<group>/<project>/logging/ に移し、マージの計算機で ssh 越しにマージして（/srv/download を NFS で merge_root にマウント）、<project>/ の直下にできた観測生データを psw/・otf/ に移す。merge_cmd の <...> は実際の値にする（リポジトリには書かない）。SAM45 のロギングに無い A05〜A08・A21〜A24 は mirror で A01〜A04・A17〜A20 の設定から作る",
   "watch": [
     ["/cosmos3/45m/bklog/sam45psw", "/home/yk/bklog/yksppsw", "psw"],
     ["/cosmos3/45m/bklog/sam45otf", "/home/yk/bklog/ykspotf", "otf"]
@@ -26,7 +26,15 @@
   "ready_timeout_s": 5.0,
   "skip_existing": true,
   "deliver_root": "/srv/download",
-  "merge_cmd": null,
+  "merge_cmd": {
+    "psw": ["ssh", "-i", "/home/yk/.ssh/id_ed25519_merge", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+            "<user>@<マージ計算機>", "<マージスクリプトの場所>/mergePSW-Y.sh",
+            "{group}", "{project}", "{log_id}", "{root}", "{logging}"],
+    "otf": ["ssh", "-i", "/home/yk/.ssh/id_ed25519_merge", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+            "<user>@<マージ計算機>", "<マージスクリプトの場所>/mergeOTF-Y.sh",
+            "{group}", "{project}", "{log_id}", "{root}", "{logging}"]
+  },
+  "merge_root": "/cosmos3/45m/bklog/yksp",
   "merge_timeout_s": 3600.0,
   "board": {
     "host": "$B",

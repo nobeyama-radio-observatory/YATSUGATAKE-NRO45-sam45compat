@@ -6,12 +6,12 @@ SAM45 のロギングの置き場所を見回り、観測ごとに:
 2. YKSP のロギング（ファイル名の装置を YKSP にしたもの）に L0・L1 を書く
 3. SAM45 の L2 を積分ごとにまとめ、ダンプが届いたら束ねて YKSP の L2 を書く
 4. ED を読んだら、残りを書いて ED を書き、分光計を終える
-5. deliver_root があれば、別スレッドでマージし、観測生データと YKSP のロギングを配信の置き場所に移す（deliver.py）
+5. deliver_root があれば、別スレッドで YKSP のロギングを配信の置き場所に移し、マージして観測生データを振り分ける（deliver.py）
 
 出力は設定の output で選ぶ:
 - "separate"（使うのはこちら）: YKSP のロギングを別のファイルに書く。肩代わりする Array だけの L1。
-  45m では bklog を読み、/home/yk/bklog の下に書く（config/bklog.json）。観測の後にマージして
-  観測生データ（YKSP）にする（マージの起動は未実装。マージのソフトの到着待ち）
+  45m では bklog を読み、/home/yk/bklog の下に書く（config/bklog.json）。観測の後に配信の置き場所に移し、
+  別の計算機で ssh 越しにマージして観測生データ（YKSP）にする（deliver.py）
 - "combined"（2026-11-10 にやめた。コードは残す）: SAM45 LC が `_` 付きの名前で書くロギングを追いかけ、
   YKSP の L2 を合体して、`_` の無い正規の名前で書く（combine.merge_integration）。
   別スレッドで心拍のファイルを更新し、暫定 LC が止まると見張り（watchdog.py）が受け持ちの印
@@ -29,7 +29,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Protocol
+from typing import Dict, List, Optional, Protocol, Union
 
 from . import combine as cb
 from . import deliver as dv
@@ -88,8 +88,10 @@ class LcConfig:
     board: Dict[str, object] = field(default_factory=dict)   # board.BoardConfig の欄（host・ctl_port・data_port・bits・tmp_dir など）
     # 観測の後の処理（deliver.py）。None なら移さない（YKSP のロギングは out_dir に残る）。45m では /srv/download
     deliver_root: Optional[str] = None
-    # マージの命令（引数の並び。{logging} {outdir} {kind} {log_id} {group} {project} を差し込む）。None ならマージを飛ばす
-    merge_cmd: Optional[List[str]] = None
+    # マージの命令（引数の並び。psw と otf で違うなら {"psw": [...], "otf": [...]}）。None ならマージを飛ばす。
+    # {logging} {root} {kind} {log_id} {obs} {group} {project} を差し込む（deliver.py）
+    merge_cmd: Optional[Union[List[str], Dict[str, List[str]]]] = None
+    merge_root: Optional[str] = None              # マージの計算機から見た deliver_root（NFS のマウント先）
     merge_timeout_s: float = 3600.0
 
     @classmethod
@@ -342,7 +344,8 @@ class LC:
             for in_dir, _, kind in self._dirs():
                 if kind not in dv.KINDS:
                     raise ValueError(f"{in_dir}: 種類（psw / otf）を決められない。watch の 3 つ目に書く")
-            self.deliverer = dv.Deliverer(cfg.deliver_root, cfg.merge_cmd, self.notify, cfg.merge_timeout_s)
+            self.deliverer = dv.Deliverer(cfg.deliver_root, cfg.merge_cmd, self.notify, cfg.merge_timeout_s,
+                                          merge_root=cfg.merge_root)
         self._candidates()
         self._last_loop = time.monotonic()
         self._hb_stop = threading.Event()

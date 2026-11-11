@@ -75,18 +75,38 @@
 ## データの流れ
 
 1. 暫定 LC が YKSP のロギングを**一時置き場**（`/home/yk/bklog`）に書く（観測中に追記）
-2. ED を書いたら、別スレッドで（見回りを止めずに）マージを起動する。マージには一時置き場のロギングを渡し、出力は一時置き場の空のフォルダに書かせる
-3. マージの出力を `/srv/download/<group>/<project>/otf/` または `psw/` に移す
-4. YKSP のロギングを `/srv/download/<group>/<project>/logging/` に移す。**マージに失敗しても移す**（運用者に知らせ、後から手でやり直せるように）
-5. 1 年を過ぎたものを消す（ロギングも同じ期間でよいかは決める）
+2. ED を書いたら、別スレッドで（見回りを止めずに）YKSP のロギングを `/srv/download/<group>/<project>/logging/` に移す
+3. **マージの計算機**に ssh で入り、マージスクリプトを走らせる（2026-11-11 に仕様が決まった）。
+   マージの計算機は `/srv/download` を NFS でマウントしていて（マウント先は `/cosmos3/45m/bklog/yksp`）、
+   `logging/` のロギングを読み、`<group>/<project>/` の直下に観測生データを書く
+4. マージの前後で `<project>/` の直下のファイルを比べ、増えたファイルを `otf/` または `psw/` に移す
+5. マージに失敗したら運用者に知らせる。ロギングは `logging/` にあるので、後から手でやり直せる
+6. 1 年を過ぎたものを消す（ロギングも同じ期間でよいかは決める）
 
-実装は `src/sam45compat/deliver.py`（設定の `deliver_root`・`merge_cmd`、2026-11-10）。
+### マージ（2026-11-11）
+
+| | |
+|---|---|
+| スクリプト | PSW: `mergePSW-Y.sh`、OTF: `mergeOTF-Y.sh`（マージの計算機にある） |
+| 引数 | `<group> <project> <ログ ID> <置き場所> <ロギング>`。置き場所とロギングは、マージの計算機から見たパス（`/cosmos3/45m/bklog/yksp`、`/cosmos3/45m/bklog/yksp/<group>/<project>/logging/YKSP.<指示書名>.<group>.<project>.<ログ ID>`） |
+| 出力 | `/cosmos3/45m/bklog/yksp/<group>/<project>/` の直下（= `/srv/download/<group>/<project>/`） |
+| 起動 | 暫定 LC の利用者（yk）の、マージ専用の鍵（パスフレーズ無し）で ssh。マージの計算機の `authorized_keys` で、`from=`（制御サーバーの管理者のセグメント側の IP）と `restrict` で絞る |
+| NFS | 制御サーバーが `/srv/download` を、**マージの計算機のセグメントにだけ**読み書きで公開する（`all_squash`・`anonuid`/`anongid` = yk）。そのセグメントには管理者しか入れず、観測者は NFS では入れない（Apache を通してだけ取る）。yk として書かせるのは、暫定 LC がマージの出力を移し、0644 に直せるように |
+
+### 実装
+
+実装は `src/sam45compat/deliver.py`（設定の `deliver_root`・`merge_cmd`・`merge_root`。2026-11-10、マージの手順は 2026-11-11）。
 
 - 別のディスクへは、写して（`.<名前>.part`）から名前を付け替える。途中のファイルを Apache から見せない
 - 移した先に同じ名前があれば上書きせず、元を一時置き場に残して知らせる
 - ファイルは 0644、フォルダは 0755（Apache の利用者が読む）
-- `merge_cmd` はマージのソフトが届いたら書く（引数の並び。`{logging}`・`{outdir}`・`{kind}`・`{log_id}`・`{group}`・`{project}` を差し込む）。それまでは `null` で、ロギングだけ移す
-- 暫定 LC を止めると、待っていた分は一時置き場に残る。手で: `python3 -m sam45compat.deliver <YKSP のロギング> --kind psw --root /srv/download [--merge-cmd ...]`
+- `merge_cmd` は引数の並び。PSW と OTF でスクリプトが違うので `{"psw": [...], "otf": [...]}` で書く（`config/bklog.json`）。
+  `{logging}`（マージの計算機から見た、`logging/` に移した後のロギング）・`{root}`（`merge_root`）・`{kind}`・`{log_id}`・`{obs}`・`{group}`・`{project}` を差し込む。
+  `null` ならマージを飛ばし、ロギングだけ移す
+- ssh は引数を空白でつないで向こうのシェルに渡すので、差し込む値は英数字と `_./+-` だけにする（ほかの文字があれば、マージせずに知らせる）
+- マージの途中のファイルは `<project>/` の直下で Apache から見える（本人にだけ）。失敗したときに残ったファイルは振り分けず、通知に名前を出す
+- 暫定 LC を止めると、待っていた分は一時置き場に残る。マージに失敗した分は `logging/` にある。どちらも手で:
+  `python3 -m sam45compat.deliver <YKSP のロギング> --kind psw --root /srv/download --merge-root /cosmos3/45m/bklog/yksp --merge-cmd ssh ... {logging}`
 
 ## 未確認のこと
 
@@ -98,6 +118,9 @@
 - [ ] 観測者のアカウントが全員、`AuthLDAPURL` の絞り込みに当てはまるか
 
 ### 解決したこと
+- [x] マージの起動 → マージの計算機で ssh 越しに走らせ、`/srv/download` は NFS で渡す（2026-11-11）
+- [x] マージにかかる時間 → 1 時間はかからない。時間切れ（`merge_timeout_s`）は 1 時間のまま（2026-11-11）
+- [x] マージが `<project>/` の直下に書くもの → マージデータだけ。ほかにあっても `otf/`・`psw/` に移してよい（2026-11-11）
 - [x] LDAP の接続 → Apache の Basic 認証で LDAP のアカウントでログインできた（2026-11-10）
 - [x] HTTPS → 仮機で HTTPS にした（2026-11-10）
 - [x] 自分の `<group>` だけを通す → 仮機で、自分は見られ、他人と頭の一覧は 403、`../`・`%2e%2e` で回り込めないことを確かめた（2026-11-10）

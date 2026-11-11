@@ -15,13 +15,13 @@ sam45compat の残りの作業。方式と決めたことは [`design/standin-st
 > YKSP のロギング（A05〜A08・A21〜A24）を `/home/yk/bklog` の下に書き、観測が終わったら暫定 LC が別に提供されるマージを起動して、
 > **SAM45 とは別の観測生データ（YKSP）**を作る。合体（旧段階 1.1・2）はやめ、進め方は段階 1 → 1.5 → 2 にした。
 > SAM45 のロギングには A05〜A08・A21〜A24 が含まれない。YKSP は A01〜A04・A17〜A20 の設定（L1）と L2 の付随の欄から A05〜A08・A21〜A24 を作る（2026-11-10）。
-> 今止めているのは、**マージのソフト**（未着、使い方も後で知らされる）。観測生データ（YKSP）はストレージ・制御サーバーに置き、所内 LAN に LDAP の認証で配る（[`design/data-delivery.md`](design/data-delivery.md)。2026-11-10）。
+> マージは、別の計算機（`/srv/download` を NFS でマウント）で ssh 越しに走らせる（2026-11-11 に仕様が決まった）。観測生データ（YKSP）はストレージ・制御サーバーに置き、所内 LAN に LDAP の認証で配る（[`design/data-delivery.md`](design/data-delivery.md)。2026-11-10）。
 
 ## 1. 調査（実装の前に要る）
 
 | | 項目 | 要る作業 |
 |---|---|---|
-| [ ] | **マージのソフトと使い方**（別に提供される。2026-11-10 時点で未着）: 起動の仕方、ほかの装置のロギングとの結び付け、L0 の名前・バックエンドの種類に何を求めるか、肩代わりする Array だけの L1 で通るか | 2-5 |
+| [ ] | **マージが YKSP のロギングに何を求めるか**（起動の仕方は 2026-11-11 に決まった: [`design/data-delivery.md`](design/data-delivery.md) の「マージ」）: ほかの装置のロギングとの結び付け、L0 の名前・バックエンドの種類、肩代わりする Array だけの L1 で通るか | 2-5 |
 | [ ] | **f2 で書き換える L1 の欄**（マージ・QL が周波数軸の計算に使う欄はどれか） | 2-3 |
 | [ ] | `istart_chan`・`iend_chan` と IF 周波数の対応（向き・ch の中心）。今は IF = 2000 ＋ k·Δ と仮定（段階 1 の比較で確かめる） | 2-1・2-6 |
 | [ ] | マージが `dbebw` に SAM45 に無い値（32e6 など）・`idmy_flag` = 1 をどう扱うか | 2-5 |
@@ -62,7 +62,7 @@ sam45compat の残りの作業。方式と決めたことは [`design/standin-st
   - [x] 本番用の設定 `config/bklog.json`（bklog を読み `/home/yk/bklog` に書く、A05〜A08・A21〜A24）（2026-11-10）
   - [x] SAM45 のロギングに無い A05〜A08・A21〜A24 を、A01〜A04・A17〜A20 から作る（`mirror` を本番の働きに。L1 は元の Array の欄を写し、L2 の付随の欄は元の Array の L2 から写す。`config/bklog.json` に `mirror`）（2026-11-10）
 - [ ] **2-4. 同じ IF の観測**: A01〜A04 と同じ IF を A05〜A08（RFSoC）に入れ、A01〜A08 を同じ周波数・帯域にした指示書で観測する
-- [ ] **2-5. マージの起動**（2026-11-10 の方針。マージのソフトの到着待ち）: 暫定 LC が YKSP のロギングに ED を書いたら、マージを起動して観測生データ（YKSP）を作る。失敗したら自分のログに残して運用者に知らせる（YKSP のロギングは残し、後から手でやり直せるようにする）。マージが通るか（肩代わりする Array だけの L1、`dbebw` の値、`idmy_flag`）を確かめる
+- [ ] **2-5. マージの起動**（`deliver.py` で済み。2026-11-11）: 暫定 LC が YKSP のロギングに ED を書いたら、`logging/` に移し、マージの計算機で ssh 越しに `mergePSW-Y.sh`・`mergeOTF-Y.sh` を走らせて観測生データ（YKSP）を作る。残りは本番の観測で通すこと。失敗したら自分のログに残して運用者に知らせる（YKSP のロギングは残し、後から手でやり直せるようにする）。マージが通るか（肩代わりする Array だけの L1、`dbebw` の値、`idmy_flag`）を確かめる
 - [ ] **2-6. 比べる**（道具は `compare.py`: `python3 -m sam45compat.compare <SAM45> <YKSP> [--npz] [--png]`。SAM45 の A05 を YKSP の軸に補間した模擬で、軸・較正が一致することを確認。2026-11-06）: SAM45（A01〜A04）と YKSP（A05〜A08）の生の値（ZERO・R・SKY・ON・OFF）・周波数軸・時刻・Tsys・スペクトル線を比べる。準備の時間（最初の R に間に合うか）と異常の通知も確かめる。マージが使えるようになったら、観測生データ（SAM45 と YKSP）どうしでも比べる
 
 ## 3. 段階 1.5（IFATT を無視する）
@@ -81,7 +81,7 @@ sam45compat の残りの作業。方式と決めたことは [`design/standin-st
 
 方式は [`design/data-delivery.md`](design/data-delivery.md)（2026-11-10。Apache の LDAP 認証とフォルダの一覧）。所内 LAN からだけ、`<group>` = LDAP のアカウント名で、自分の `<group>` の下の `<project>` を全部見られる。
 
-- [ ] **5-1. ストレージへ移す**（`deliver.py`・`lc.py` で済み。設定の `deliver_root`。2026-11-10）: ED を書いたら別スレッドで、マージ（`merge_cmd`）の出力を `/srv/download/<group>/<project>/otf/` または `psw/` に、YKSP のロギングを `logging/` に移す。残りはマージの命令を書くこと（ソフトの到着待ち）と、本番機で `/srv/download` をストレージに置くこと
+- [ ] **5-1. ストレージへ移す**（`deliver.py`・`lc.py` で済み。設定の `deliver_root`。2026-11-10）: ED を書いたら別スレッドで、YKSP のロギングを `/srv/download/<group>/<project>/logging/` に移し、マージ（`merge_cmd`、マージの計算機で ssh 越し）が `<project>/` の直下に書いた出力を `otf/` または `psw/` に移す。仮機で NFS の公開と ssh の鍵まで済んだ（2026-11-11）。残りは仮機の設定に `merge_cmd` を入れて観測で通すことと、本番機で `/srv/download` をストレージに置くこと
 - [ ] **5-2. 配信の口**: Apache の LDAP 認証で、ログインした名前と同じ `<group>` だけを通す。HTTPS、ダウンロード用の NIC・所内 LAN からだけ、速さの制限と低い優先度。ほかの `<group>` を見られないことを試験する（仮機で HTTPS・LDAP・`<group>` の制限と試験まで済み。`/download` を開くと自分のフォルダへ転送する（2026-11-10）。[`tools/apache/yksp-download.conf`](../tools/apache/yksp-download.conf)、[`operation/server-setup-provisional.md`](operation/server-setup-provisional.md) の 5.2。残りは速さの制限・優先度・ファイアウォール、LDAP との間の暗号化、本番機への移し替え。2026-11-10）
 - [ ] **5-3. 検索**: まずはフォルダの一覧とファイル名で観測者に試してもらい、足りなければ L1 から作った一覧で検索するページを足す
 - [ ] **5-4. 1 年を過ぎたものを消す**（自動か手か、ロギングも同じ期間か）

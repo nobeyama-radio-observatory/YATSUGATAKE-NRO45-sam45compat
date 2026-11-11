@@ -19,11 +19,14 @@ from test_yksp import _sam45_records
 
 NAME = "YKSP.obs1.alice.proj1.20261110120000"
 
-# マージの代わり: {outdir} に <ログ ID>.raw を書く
-FAKE_MERGE = [sys.executable, "-c",
-              "import sys, os; open(os.path.join(sys.argv[2], sys.argv[3] + '.raw'), 'w').write(sys.argv[1])",
-              "{logging}", "{outdir}", "{log_id}"]
-FAIL_MERGE = [sys.executable, "-c", "import sys; sys.stderr.write('bad'); sys.exit(3)"]
+# マージの代わり（本物と同じ引数: <group> <project> <ログ ID> <置き場所> <ロギング>）:
+# <置き場所>/<group>/<project>/ の直下に <ログ ID>.raw を書き、中にロギングのパスを書く
+_FAKE = ("import sys, os; g, p, i, root, lg = sys.argv[1:]; assert os.path.exists(lg); "
+         "open(os.path.join(root, g, p, i + '.raw'), 'w').write(lg)")
+FAKE_MERGE = [sys.executable, "-c", _FAKE, "{group}", "{project}", "{log_id}", "{root}", "{logging}"]
+FAIL_MERGE = [sys.executable, "-c",
+              "import sys, os; open(os.path.join(sys.argv[1], 'half.raw'), 'w'); sys.stderr.write('bad'); sys.exit(3)",
+              "{root}/{group}/{project}"]
 
 
 class TestDeliver(unittest.TestCase):
@@ -53,16 +56,55 @@ class TestDeliver(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(dst).st_mode), 0o644)
         self.assertFalse(os.path.exists(os.path.join(self.root, "alice", "proj1", "psw")))
 
-    def test_merge_then_move(self):
+    def test_move_then_merge(self):
         note = Notifier()
-        d = dv.Deliverer(self.root, FAKE_MERGE, note, background=False)
+        proj = os.path.join(self.root, "alice", "proj1")
+        os.makedirs(proj)
+        with open(os.path.join(proj, "old.raw"), "w") as f:      # 前からあるものは動かさない
+            f.write("old")
+        d = dv.Deliverer(self.root, {"otf": FAKE_MERGE}, note, background=False)
         d.submit(dv.Job(self.log, "otf"))
-        raw = os.path.join(self.root, "alice", "proj1", "otf", "20261110120000.raw")
-        with open(raw) as f:
-            self.assertEqual(f.read(), self.log)                # マージには一時置き場のロギングを渡す
-        self.assertTrue(os.path.exists(os.path.join(self.root, "alice", "proj1", "logging", NAME)))
+        lg = os.path.join(proj, "logging", NAME)
+        with open(os.path.join(proj, "otf", "20261110120000.raw")) as f:
+            self.assertEqual(f.read(), lg)                      # マージには logging/ に移した後のロギングを渡す
+        self.assertEqual(sorted(os.listdir(proj)), ["logging", "old.raw", "otf"])
         self.assertEqual(note.sent, [])
-        self.assertEqual([f for f in os.listdir(self.work)], [])    # 出力の一時のフォルダは消える
+        self.assertEqual(os.listdir(self.work), [])
+
+    def test_merge_root(self):
+        # マージの計算機からは置き場所が別の場所に見える（NFS のマウント先）
+        rec = os.path.join(self.tmp.name, "args")
+        cmd = [sys.executable, "-c", "import sys; open(sys.argv[1], 'w').write(' '.join(sys.argv[2:]))",
+               rec, "{group}", "{project}", "{log_id}", "{root}", "{logging}"]
+        d = dv.Deliverer(self.root, cmd, Notifier(), background=False, merge_root="/cosmos3/45m/bklog/yksp")
+        d.submit(dv.Job(self.log, "psw"))
+        with open(rec) as f:
+            self.assertEqual(f.read(), "alice proj1 20261110120000 /cosmos3/45m/bklog/yksp "
+                             "/cosmos3/45m/bklog/yksp/alice/proj1/logging/" + NAME)
+
+    def test_merge_per_kind(self):
+        d = dv.Deliverer(self.root, {"otf": FAKE_MERGE}, Notifier(), background=False)
+        d.submit(dv.Job(self.log, "psw"))                       # psw のマージは無い
+        self.assertEqual(sorted(os.listdir(os.path.join(self.root, "alice", "proj1"))), ["logging"])
+        with self.assertRaises(ValueError):
+            dv.Deliverer(self.root, {"other": FAKE_MERGE}, background=False)
+
+    def test_redo_from_logging(self):
+        # マージに失敗した後、logging/ にあるロギングで手でやり直す
+        d = dv.Deliverer(self.root, None, Notifier(), background=False)
+        d.submit(dv.Job(self.log, "psw"))
+        lg = os.path.join(self.root, "alice", "proj1", "logging", NAME)
+        d = dv.Deliverer(self.root, FAKE_MERGE, Notifier(), background=False)
+        d.submit(dv.Job(lg, "psw"))
+        self.assertTrue(os.path.exists(lg))
+        self.assertTrue(os.path.exists(os.path.join(self.root, "alice", "proj1", "psw", "20261110120000.raw")))
+
+    def test_unsafe_value(self):
+        bad = os.path.join(self.work, "YKSP.ob;s.alice.proj1.20261110120000")
+        os.rename(self.log, bad)
+        d = dv.Deliverer(self.root, FAKE_MERGE, Notifier(), background=False)
+        with self.assertRaises(ValueError):
+            d.submit(dv.Job(bad, "psw"))
 
     def test_merge_failure_still_moves_logging(self):
         note = Notifier()
@@ -72,6 +114,8 @@ class TestDeliver(unittest.TestCase):
         self.assertEqual(len(note.sent), 1)
         self.assertIn("マージに失敗（終了コード 3）", note.sent[0])
         self.assertIn("bad", note.sent[0])
+        self.assertIn("half.raw", note.sent[0])                 # 途中のファイルは振り分けず、知らせる
+        self.assertFalse(os.path.exists(os.path.join(self.root, "alice", "proj1", "psw")))
 
     def test_does_not_overwrite(self):
         dst_dir = os.path.join(self.root, "alice", "proj1", "logging")

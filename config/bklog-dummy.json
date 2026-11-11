@@ -1,5 +1,5 @@
 {
-  "_comment": "yk-c の試し: bklog の SAM45 のロギングの新規作成をきっかけに、YKSP だけのロギングをダミーのスペクトルで作る。--fake で起こす。観測の後、YKSP のロギングを /srv/download/<group>/<project>/logging/ に移す。本番は config/bklog.json",
+  "_comment": "yk-c の試し: bklog の SAM45 のロギングの新規作成をきっかけに、YKSP だけのロギングをダミーのスペクトルで作る。--fake で起こす。観測の後、YKSP のロギングを /srv/download/<group>/<project>/logging/ に移す。マージも試すときは config/bklog.json の merge_cmd・merge_root を写し、<...> を埋めて config/bklog-dummy.local.json として使う（*.local.* は git に入らない）。本番は config/bklog.json",
   "watch": [
     ["/cosmos3/45m/bklog/sam45psw", "/home/yk/bklog/yksppsw"],
     ["/cosmos3/45m/bklog/sam45otf", "/home/yk/bklog/ykspotf"]

@@ -2,7 +2,7 @@
 
 段階 1 では、SAM45 の A01〜A04 と**同じ IF** を YATSUGATAKE（A05〜A08・A21〜A24 の受け持ち）に入れて観測する。
 暫定 LC は SAM45 のロギング（bklog）を読み、A05〜A08・A21〜A24 の YKSP のロギングを `/home/yk/bklog` の下に書く。
-観測が終わったら、暫定 LC がマージを起動して観測生データ（YKSP）を作る【未定: マージのソフトは別に提供される（2026-11-10 時点で未着）】。
+観測が終わったら、暫定 LC が YKSP のロギングを `/srv/download` に移し、マージの計算機で ssh 越しにマージを起動して観測生データ（YKSP）を作る（[`../design/data-delivery.md`](../design/data-delivery.md)）。
 YKSP のロギング（と観測生データ）を SAM45 と比べる。
 SAM45 のロギングには手を入れない（読むだけ）。SAM45 のロギングには A05〜A08・A21〜A24 が含まれない。YKSP は A01〜A04・A17〜A20 の設定（L1）と L2 の付随の欄から A05〜A08・A21〜A24 を作る（2026-11-10）。方式は [`../design/standin-study.md`](../design/standin-study.md)、作業の一覧は [`../plan.md`](../plan.md) の 2.。
 
@@ -93,11 +93,10 @@ PYTHONPATH=src python3 -m sam45compat.lc --config my.json 2>&1 | tee -a lc.log
   PYTHONPATH=src python3 -c "import sys; from sam45compat import samlog as sl; print(sl.summary(sl.read_file(sys.argv[1])))" <YKSP のロギング>
   # (L2 の数, 使う Array の数, ED があるか)
   ```
-- [ ] 暫定 LC がマージを起動し、観測生データ（YKSP）ができた【未定: マージのソフトと使い方は後で知らされる。観測生データ（YKSP）はストレージ・制御サーバーのストレージに置く（[`../design/data-delivery.md`](../design/data-delivery.md)）】
+- [ ] 暫定 LC のログに「YKSP のロギングを移した」「マージ: ssh …」「観測生データを移した」が出て、`/srv/download/<group>/<project>/` の `logging/` と `psw/`（または `otf/`）にファイルがある。失敗したら通知が来る（やり直しは [`../design/data-delivery.md`](../design/data-delivery.md) の「実装」）
 - [ ] SAM45 のロギングも、いつもどおりマージされていることを確かめる
 - [ ] **肩代わりする Array だけの L1（`iary_usefg`・`iary_num`）でマージが通るか**を記録する（通らなければ、そのとき考える）
 - [ ] マージが `dbebw` の値（32 MHz など、SAM45 に無い値）・`idmy_flag` = 1 で困らないかを記録する
-- マージのソフトが届くまでは、下の「4. 比べる」でロギングどうしを比べる
 
 ## 4. 比べる
 
