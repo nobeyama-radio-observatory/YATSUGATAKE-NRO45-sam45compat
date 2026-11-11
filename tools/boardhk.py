@@ -26,6 +26,9 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 INA_NAMES = {"40": "VCCINT"}
+# AMS の sysfs に名前のファイル（in_<名前>_label）が無いときの温度の名前（Xilinx の AMS の番号の慣例。2026-11-11 の
+# ボードでは temp7・temp8・temp20 の 3 つだった）。電圧は番号から決めない（名前のファイルが無ければ番号のまま）
+AMS_TEMP_LABELS = {"temp7": "PS_LPD", "temp8": "PS_FPD", "temp20": "PL"}
 
 
 def _read(path):
@@ -34,7 +37,7 @@ def _read(path):
 
 
 def ams_channels():
-    """[(名前, raw の道, scale, offset)]。AMS が無ければ []。"""
+    """[(名前, raw の道, scale, offset, 表示の名前)]。AMS が無ければ []。"""
     for d in glob.glob("/sys/bus/iio/devices/iio:device*"):
         try:
             if _read(d + "/name") != "xilinx-ams":
@@ -51,7 +54,11 @@ def ams_channels():
                     return float(_read(p))
                 except (OSError, ValueError):
                     return default
-            out.append((name, raw, num(base + "_scale", 1.0), num(base + "_offset", 0.0)))
+            try:
+                label = _read(base + "_label")
+            except OSError:
+                label = AMS_TEMP_LABELS.get(name, "")
+            out.append((name, raw, num(base + "_scale", 1.0), num(base + "_offset", 0.0), label))
         return out
     return []
 
@@ -106,7 +113,7 @@ class Sampler(threading.Thread):
 
     def sample(self):
         temp, volt, curr = {}, {}, {}
-        for name, raw, sc, off in self.ams:
+        for name, raw, sc, off, _ in self.ams:
             try:
                 v = (float(_read(raw)) + off) * sc
             except (OSError, ValueError):
@@ -134,6 +141,7 @@ class Sampler(threading.Thread):
         root = os.statvfs("/")
         return {
             "t": time.time(),
+            "labels": {name: label for name, _, _, _, label in self.ams if label},
             "temp_c": temp,
             "volt_mv": volt,
             "curr_ma": curr,

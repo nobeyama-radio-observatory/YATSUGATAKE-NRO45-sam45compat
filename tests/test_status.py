@@ -180,6 +180,16 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(stm.BoardPoller(_Spec()).hk_url, "http://192.0.2.1:51010/")
         self.assertIsNone(stm.BoardPoller(_Busy()).hk_url)
 
+    def test_hk_with_fake_spec(self):
+        """--fake で動かしていても、設定の board に hk_port があればボードの常駐を読む。"""
+        cfg = lcm.LcConfig(log_dir=self.dir, board={"host": "192.0.2.1", "hk_port": 51010})
+        lc = lcm.LC(cfg, FakeSpectrometer(), Notifier())
+        w = stm.StatusWriter(lc, self.path)
+        self.assertEqual(w.board.hk_url, "http://192.0.2.1:51010/")
+        self.assertEqual(w.snapshot()["board"]["mode"], "fake")
+        self.assertIn("hk", w.snapshot()["board"])
+        lc.close()
+
 
 if __name__ == "__main__":
     unittest.main()

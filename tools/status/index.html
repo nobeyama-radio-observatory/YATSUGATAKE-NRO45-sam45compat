@@ -265,7 +265,7 @@ const TEMP_WARN_C = 65, TEMP_BAD_C = 75;
 const VCCINT_WARN_A = 35, VCCINT_BAD_A = 40;
 const PCT_WARN = 85, PCT_BAD = 95;
 const ACQ_CPU = "cpu3";       // specd の取得を固定している CPU（specd の --cpu）
-const TEMP_NAME = { ps_temp: "PS（LPD）", remote_temp: "PS（FPD）", pl_temp: "PL" };
+const TEMP_NAME = { PS_LPD: "PS（LPD）", PS_FPD: "PS（FPD）", PL: "PL", ps_temp: "PS（LPD）", remote_temp: "PS（FPD）", pl_temp: "PL" };
 const lv = (v, w, b) => (v == null ? "idle" : v >= b ? "bad" : v >= w ? "warn" : "ok");
 function renderHK(hk, now) {
   if (!hk) {
@@ -284,8 +284,9 @@ function renderHK(hk, now) {
   if (!d) { $("hk").replaceChildren(...head); $("hk-tag").replaceChildren(tag("warn", "未取得")); return "warn"; }
   if (d.error) head.push(el("p", { class: "warn" }, "読めない値がある: " + d.error));
 
+  const labels = d.labels || {};
   const temps = Object.entries(d.temp_c || {}).map(([k, v]) => {
-    const n = k.replace(/^temp\d+_/, "");
+    const n = labels[k] || k.replace(/^temp\d+_/, "");
     return [TEMP_NAME[n] || n, v, lv(v, TEMP_WARN_C, TEMP_BAD_C)];
   });
   const curr = Object.entries(d.curr_ma || {}).map(([k, v]) => {
@@ -320,7 +321,8 @@ function renderHK(hk, now) {
       ["値の時刻", hk.t_ok ? `${hms(hk.t_ok)}（${dur(age)}前）` : "-", age > BOARD_STALE_S ? "warn" : null],
     ]),
     volts.length ? el("details", {}, el("summary", {}, `電圧（AMS、${volts.length} ch）`),
-      grid(["名前", "mV"], volts.map(([k, v]) => [k, v.toFixed(1)]))) : "");
+      grid(["sysfs", "名前", "mV"], volts.sort(([a], [b]) => parseInt(a.slice(7)) - parseInt(b.slice(7)))
+        .map(([k, v]) => [k, labels[k] || "-", v.toFixed(1)]))) : "");
   if (age > BOARD_STALE_S) level = worst(level, "warn");
   $("hk-tag").replaceChildren(tag(level, BANNER[level]));
   return level;

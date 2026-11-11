@@ -181,7 +181,10 @@ class StatusWriter:
         self.lc = lc
         self.path = path
         self.interval_s = interval_s
-        self.board = BoardPoller(lc.spec, board_interval_s)
+        # ボードの常駐（boardhk.py）の宛先は設定の board から決める（--fake で動かしているときも読む）
+        b = lc.cfg.board if isinstance(lc.cfg.board, dict) else {}
+        hk_url = f"http://{b['host']}:{b['hk_port']}/" if b.get("hk_port") and b.get("host") else None
+        self.board = BoardPoller(lc.spec, board_interval_s, hk_url=hk_url)
         self.t_start = time.time()
         self.host = socket.gethostname()
         self._stop = threading.Event()
