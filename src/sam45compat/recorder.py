@@ -40,6 +40,11 @@ F_NOTIME = 1 << 17    # 時刻を答えられない（utc_ns = 0）
 F_AXIS = 1 << 18      # 軸（if_mhz・df）が予定と違う
 WIN_FLAGS_MASK = 0x7EF   # 窓の FLAGS の [4]（FFT IP に待たされた）は正常（specrecv と同じ）
 DEFAULT_FLAG_MASK = WIN_FLAGS_MASK | F_SAT | F_NOTIME | F_AXIS
+# 記録の health の [3:0]（DUMP_H。コアの hw/common/time_core.v の ev_out。ダンプの間の OR）
+H_PPS_MISS = 1 << 0     # 1PPS が来ていない（1.5 s）
+H_PPS_INT = 1 << 1      # 1PPS の間隔が 256,000,000 ± PPS_TOL（既定 1）ビートを外れた = fs が 1PPS と同じ基準に乗っていない
+H_PPS_GLITCH = 1 << 2   # 1PPS のグリッチ
+H_NOANCHOR = 1 << 3     # 時刻の原点が無い
 
 
 def key_of(core: int, s: int) -> str:
@@ -162,6 +167,35 @@ class DiskDumps:
             shutil.rmtree(self.path, ignore_errors=True)
 
 
+class RefWatch:
+    """周波数の基準（10 MHz）が効いているかを、受けた記録の health の 1PPS の間隔の印で見る（状態のページ用。2026-11-11）。
+
+    10 MHz が来ていない（または specd が --clkin 0 でない）と fs は 1PPS に対して ppm 単位でずれ、1PPS の間隔
+    （256 MHz のビートで数える）が ±1 ビート（±3.9 ppb）を外れる。コアの ADR 0006・0008。
+    RUN の間（記録が来ている間）しか判定できず、1PPS が無いと判定できない。LMK04828 のホールドオーバがあるので、
+    10 MHz を抜いてもすぐには外れない。
+    """
+
+    def __init__(self):
+        self.n = 0
+        self.t_last: Optional[float] = None
+        self.t: Dict[str, Optional[float]] = {"int": None, "miss": None, "glitch": None}
+        self.cnt: Dict[str, int] = {"int": 0, "miss": 0, "glitch": 0}
+
+    def add(self, health: int, t: Optional[float] = None) -> None:
+        t = time.time() if t is None else t
+        self.n += 1
+        self.t_last = t
+        for k, bit in (("int", H_PPS_INT), ("miss", H_PPS_MISS), ("glitch", H_PPS_GLITCH)):
+            if health & bit:
+                self.t[k] = t
+                self.cnt[k] += 1
+
+    def info(self) -> Dict[str, object]:
+        return {"n": self.n, "t_last": self.t_last,
+                **{f"t_{k}": v for k, v in self.t.items()}, **{f"n_{k}": v for k, v in self.cnt.items()}}
+
+
 class Recorder(threading.Thread):
     """データの口に 1 本つなぎ、記録を今の DiskDumps に渡し続ける。切れたらつなぎ直す。"""
 
@@ -172,6 +206,7 @@ class Recorder(threading.Thread):
         self.last_seq: Optional[int] = None
         self.n_spec = 0
         self.n_drop_events = 0
+        self.ref = RefWatch()
         self.connected = False
         self._stop = threading.Event()
         self._started_store = False
@@ -247,5 +282,7 @@ class Recorder(threading.Thread):
         st = self.store
         if st is None or not self._started_store:
             return
-        st.add(P.decode(rtype, pl, ver))
+        d = P.decode(rtype, pl, ver)
+        self.ref.add(int(d["health"]))
+        st.add(d)
         self.n_spec += 1

@@ -215,6 +215,25 @@ function renderNotices(lc) {
 
 // specd の STATUS（docs: external/YATSUGATAKE/docs/user/specd.md の「STATUS の見方」）
 const ZERO_KEYS = ["miss", "kgap", "drop", "tp_lost", "tp_bad", "tp_ovr", "sat", "pl_drop", "pl_crc", "pl_err", "bdrop", "r_bad"];
+// 周波数の基準（10 MHz）: 受けた記録の health の 1PPS の間隔の印（src/sam45compat/recorder.py の RefWatch）。
+// 10 MHz が来ていない・specd が --clkin 0 でないと fs がずれ、1PPS の間隔が ±1 ビート（±3.9 ppb）を外れる。
+// 記録を受けている間（観測中）しか判定できない。観測していなければ最後の記録の時点の判定を出す
+const REF_RECENT_S = 60, REF_LIVE_S = 10;
+function refRow(rec, now) {
+  const r = rec.ref;
+  if (!r) return [["周波数の基準（10 MHz）", "-"], null];
+  if (rec.no_pps) return [["周波数の基準（10 MHz）", el("span", {}, tag("idle", "判定できない"), " 1PPS なしの試験（board.no_pps）")], null];
+  if (!r.n) return [["周波数の基準（10 MHz）", el("span", { class: "mute" }, "観測中（記録を受けている間）だけ判定する。LC を起こしてから記録なし")], null];
+  const live = now - r.t_last < REF_LIVE_S;
+  const within = (t) => t && r.t_last - t < REF_RECENT_S;
+  let cls, msg, why;
+  if (within(r.t_miss)) { cls = "warn"; msg = "判定できない"; why = "1PPS が来ていない"; }
+  else if (within(r.t_int)) { cls = live ? "bad" : "warn"; msg = "ずれている"; why = "1PPS の間隔が ±1 ビートを外れた。10 MHz が来ていない・specd が --clkin 0 でない"; }
+  else { cls = "ok"; msg = "OK"; why = "1PPS の間隔が ±1 ビート（≒ ±4 ppb）の内"; }
+  const extra = [why, live ? "" : `最後の記録 ${hms(r.t_last)} の時点`, r.n_int ? `外れた記録 ${r.n_int}（最後 ${hms(r.t_int)}）` : ""].filter(Boolean).join(" ・ ");
+  return [["周波数の基準（10 MHz）", el("span", {}, tag(cls, msg), " ", extra)], cls === "ok" ? null : cls];
+}
+
 function renderBoard(b, now) {
   if (b.mode === "fake") { $("bd").replaceChildren(el("p", {}, tag("warn", "模擬"), " LC は --fake（ダミーのスペクトル）で動いている")); return ["warn", "模擬"]; }
   const st = b.status;
@@ -246,8 +265,12 @@ function renderBoard(b, now) {
     el("span", {}, "ADC_" + a), el("b", {}, dbm[i] && dbm[i] !== "-" ? dbm[i] + " dBm" : (dbfs[i] && dbfs[i] !== "-" ? dbfs[i] + " dBFS" : "-")),
     el("span", {}, dbm[i] && dbm[i] !== "-" && dbfs[i] ? dbfs[i] + " dBFS" : ""))));
   const rec = b.recorder || {};
+  const [ref, refLv] = refRow(rec, now);
+  if (refLv === "bad") level = "bad";
+  else if (refLv === "warn" && level === "ok") level = "warn";
   $("bd").replaceChildren(...head, el("h2", {}, "ADC の入力（TP）"), adc, kvTable([
     ["状態", tag(stCls, state)],
+    ref,
     ["時刻（1PPS）", timeOk ? tag("ok", "OK") : tag(st.forced === "1" ? "warn" : "bad", "答えられない" + (st.time_err ? `（${st.time_err}）` : ""))],
     ["ダンプ", st.dumps],
     ["0 でない数", nonzero.length ? el("span", {}, nonzero.map((k) => tag("warn", `${k}=${st[k]}`)), "") : tag("ok", "なし")],

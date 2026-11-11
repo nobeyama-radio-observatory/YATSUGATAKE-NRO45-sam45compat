@@ -179,7 +179,8 @@ class BoardSpectrometer:
         st = self.store
         return {"connected": r.connected, "n_spec": r.n_spec, "n_drop_events": r.n_drop_events,
                 "store": st is not None, "n_notime": st.n_notime if st is not None else 0,
-                "n_axis_bad": st.n_axis_bad if st is not None else 0}
+                "n_axis_bad": st.n_axis_bad if st is not None else 0, "ref": r.ref.info(),
+                "no_pps": bool(self.cfg.no_pps)}
 
     def close(self) -> None:
         self._close_store()

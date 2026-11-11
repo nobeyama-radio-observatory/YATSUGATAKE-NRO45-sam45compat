@@ -59,5 +59,20 @@ class TestNoPps(unittest.TestCase):
         dd.close()
 
 
+class TestRefWatch(unittest.TestCase):
+    def test_marks(self):
+        w = rc.RefWatch()
+        self.assertEqual((w.info()["n"], w.info()["t_int"]), (0, None))
+        w.add(0, t=100.0)
+        w.add(rc.H_PPS_INT, t=101.0)                 # 1PPS の間隔が外れた（10 MHz なし）
+        w.add(rc.H_PPS_MISS | rc.H_NOANCHOR, t=102.0)
+        w.add(rc.P.H_FORCED, t=103.0)                 # サーバーの印は見ない
+        i = w.info()
+        self.assertEqual((i["n"], i["t_last"]), (4, 103.0))
+        self.assertEqual((i["t_int"], i["n_int"]), (101.0, 1))
+        self.assertEqual((i["t_miss"], i["n_miss"]), (102.0, 1))
+        self.assertEqual((i["t_glitch"], i["n_glitch"]), (None, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

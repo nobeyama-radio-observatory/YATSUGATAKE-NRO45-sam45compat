@@ -112,6 +112,7 @@ class TestBoardFake(unittest.TestCase):
         self.assertIsNotNone(self.spec.status_nowait())
         info = self.spec.recorder_info()
         self.assertIn("connected", info)
+        self.assertIn("n_int", info["ref"])
 
     def test_2_lc_end_to_end(self):
         """暫定 LC ＋ specd --fake: 今の時刻の積分を持つ SAM45 のロギングを、積分が終わるたびに書き足す。"""
