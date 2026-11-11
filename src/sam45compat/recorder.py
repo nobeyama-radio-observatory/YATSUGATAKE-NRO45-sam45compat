@@ -5,6 +5,9 @@
 - ACK（書き終えた最後の seq）を 0.2 秒おきに返す。specd はそこまでを溜まりから消す
 - ダンプは窓ごとのファイル（float32 × 4096 の行）に書き足し、時刻の索引だけを手元に持つ。
   10.24 ms で 8 窓は ≒ 12.8 MB/s（1 時間で ≒ 46 GB）なので、メモリには持たない。観測が終わったら消す
+- no_pps（1PPS なしの試験、2026-11-11）: specd は時刻を答えない（utc_ns = 0）。最初のダンプを受けたときの
+  この計算機の時計を起点にし、ビート（dump_t）の差から tint 単位の番号を出して時刻を付ける。
+  ずれはネットワークと specd の溜まりの遅れぶん（数 ms〜数十 ms）。流れの確かめ用で、科学には使えない
 """
 
 from __future__ import annotations
@@ -46,8 +49,13 @@ def key_of(core: int, s: int) -> str:
 class DiskDumps:
     """観測 1 つぶんのダンプ（窓ごとのファイル）。binning.DumpSource として束ねに使う。"""
 
-    def __init__(self, path: str, expect: Dict[str, Tuple[float, float]], tint_ns: int = TINT_NS):
+    def __init__(self, path: str, expect: Dict[str, Tuple[float, float]], tint_ns: int = TINT_NS,
+                 no_pps: bool = False):
         """expect: 窓の鍵 → (記録の if_mhz, df [MHz])。この窓だけを溜め、軸を照らす。"""
+        self.no_pps = no_pps
+        self._dt: Dict[str, list] = {k: [] for k in expect}      # no_pps: ダンプの dump_t（ビート）
+        self._anchor: Optional[Tuple[int, int]] = None            # no_pps: (この計算機の時計 [ns], dump_t)
+        self._step: Optional[int] = None                          # no_pps: tint 1 つぶんのビート
         self.path = path
         self.expect = dict(expect)
         self.tint_ns = tint_ns
@@ -69,7 +77,9 @@ class DiskDumps:
         fl = d["flags"] & WIN_FLAGS_MASK
         if d["sat"]:
             fl |= F_SAT
-        if d["utc_ns"] == 0 or d["health"] & P.H_NOTIME:
+        if self.no_pps:
+            pass                                  # 時刻は dump_t から付ける（_times）
+        elif d["utc_ns"] == 0 or d["health"] & P.H_NOTIME:
             fl |= F_NOTIME
             self.n_notime += 1
         if_mhz, df = self.expect[k]
@@ -81,17 +91,38 @@ class DiskDumps:
             self.n_axis_bad += 1
         data = np.ascontiguousarray(d["data"], dtype="<f4")
         with self._lock:
+            if self.no_pps and self._anchor is None:
+                # ダンプは区間が終わってから届くので、受けた時刻から tint 1 つぶん戻したところを区間の始まりとする
+                self._anchor = (time.time_ns() - self.tint_ns, int(d["dump_t"]))
             self._f[k].write(data.tobytes())
             self._t[k].append(int(d["utc_ns"]))
+            self._dt[k].append(int(d["dump_t"]))
             self._fl[k].append(fl)
+
+    def _times(self, key: str) -> list:
+        """窓 key のダンプの時刻（_lock を持って呼ぶ）。no_pps なら dump_t から作る。"""
+        if not self.no_pps:
+            return self._t[key]
+        dts = self._dt[key]
+        if not dts or self._anchor is None:
+            return []
+        if self._step is None:
+            # tint 1 つぶんのビート = 窓の中で隣り合うダンプの差の一番小さいもの（落ちたダンプは差が倍になる）
+            diffs = [b - a for v in self._dt.values() for a, b in zip(v, v[1:]) if b > a]
+            if not diffs:
+                return [self._anchor[0]]          # まだ 1 つずつしか無い（差がわからない）
+            self._step = min(diffs)
+        h0, d0 = self._anchor
+        n = np.rint((np.asarray(dts, dtype=np.int64) - d0) / self._step).astype(np.int64)
+        return list(h0 + n * self.tint_ns)
 
     def interval(self, key: str, st_ns: int, ed_ns: int) -> Binned:
         with self._lock:
             if key not in self._f:
                 return Binned(None, 0, 0)
             self._f[key].flush()
-            t = np.asarray(self._t[key], dtype=np.int64)
-            fl = np.asarray(self._fl[key], dtype=np.int64)
+            t = np.asarray(self._times(key), dtype=np.int64)
+            fl = np.asarray(self._fl[key][: len(t)], dtype=np.int64)
         ok = (fl & F_NOTIME) == 0
         if not ok.all():                 # 時刻の無いダンプは区間に当てられない
             t, fl, rows = t[ok], fl[ok], np.nonzero(ok)[0]
@@ -103,14 +134,17 @@ class DiskDumps:
         if not order_ok:
             raise ValueError(f"{key}: ダンプの時刻が昇順でない")
         mm = np.memmap(os.path.join(self.path, f"{key}.f32"), dtype="<f4", mode="r")
-        spec = mm[: (len(mm) // NCH) * NCH].reshape(-1, NCH)
+        spec = mm[: (len(mm) // NCH) * NCH].reshape(-1, NCH)[: len(fl) if rows is None else len(ok)]
         if rows is not None:
             spec = spec[rows]
         return bin_interval(t, spec, st_ns, ed_ns, fl, self.tint_ns)
 
     def latest_end_ns(self) -> Optional[int]:
         with self._lock:
-            ends = [v[-1] + self.tint_ns if v else None for v in self._t.values()]
+            ends = []
+            for k in self._t:
+                v = self._times(k)
+                ends.append(v[-1] + self.tint_ns if v else None)
         if not ends or any(e is None for e in ends):
             return None
         return min(ends)

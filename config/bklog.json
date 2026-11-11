@@ -42,6 +42,7 @@
     "data_port": 51001,
     "bits": {"fine": "sam45-fine", "wide": "sam45-wide"},
     "tmp_dir": "/home/yk/bklog/tmp",
-    "keep_tmp": false
+    "keep_tmp": false,
+    "no_pps": false
   }
 }

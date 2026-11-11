@@ -64,6 +64,9 @@ class BoardConfig:
     tmp_dir: str = "/tmp/sam45compat"
     keep_tmp: bool = False
     load_timeout_s: float = 120.0
+    # 1PPS なしの試験（2026-11-11）: START force=1 で時刻なしで取り、この計算機の時計で時刻を付ける（recorder.py）。
+    # ずれは数 ms〜数十 ms。流れ（記録 → 束ね → YKSP のロギング → マージ → 配信）の確かめ用で、科学には使えない
+    no_pps: bool = False
 
 
 class BoardSpectrometer:
@@ -100,15 +103,17 @@ class BoardSpectrometer:
             # 時刻を答えられない（PPS の照合が一度でも外れると錨を打ち直すまで戻らない）と START が断られる。
             # RUN の間は錨を打ち直せないので、観測の始まり（IDLE のここ）で打ち直す
             st = self._ok(c, "STATUS")
-            if st.get("time_ok") not in ("1", "True", "true"):
+            if self.cfg.no_pps:
+                log.warning("%s: 1PPS なしの試験（board.no_pps）。時刻はこの計算機の時計で付ける。科学には使えない", log_id)
+            elif st.get("time_ok") not in ("1", "True", "true"):
                 log.warning("時刻を答えられない（%s）。錨を打ち直す", st.get("time_err", "-"))
                 self._ok(c, "ANCHOR")
             expect = {w.slot.key: (w.if_mhz, w.df_mhz) for w in plan.windows.values()}
             self.store = DiskDumps(os.path.join(self.cfg.tmp_dir, log_id), expect,
-                                   int(round(self.tint_s * 1e9)))
+                                   int(round(self.tint_s * 1e9)), no_pps=self.cfg.no_pps)
             self.recorder.set_store(self.store)
             self._ok(c, "CLEAR")
-            self._ok(c, "START")
+            self._ok(c, "START force=1" if self.cfg.no_pps else "START")
             self._ok(c, "SEND ON")
         finally:
             c.close()
