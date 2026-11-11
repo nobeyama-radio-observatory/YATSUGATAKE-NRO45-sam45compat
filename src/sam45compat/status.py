@@ -6,6 +6,8 @@
 - ボード: 別の 1 本のスレッドが status_board_s ごとに specd の STATUS を取る。制御の口は同時に 1 接続だけなので、
   board.BoardSpectrometer.status_nowait（LC の命令と同じロック）を使い、LOAD などで使っているときは問い合わせを飛ばす。
   つながらないときの待ち（数秒）で JSON の更新を止めないよう、LC の状態とは別のスレッドにする
+- ボードの温度・電源・CPU・メモリ: 設定の board.hk_port があれば、同じスレッドでボードの常駐（tools/boardhk.py）に
+  HTTP で問い合わせる。specd とは別のプロセスなので、ロックは要らない
 - 中身は表示用。運用の判断（無効にする・知らせる）は今までどおり lc.py が行う。ここが失敗しても LC は止めない
 
 設計は docs/design/status-page.md。
@@ -20,6 +22,7 @@ import shutil
 import socket
 import threading
 import time
+import urllib.request
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -33,7 +36,7 @@ VERSION = 1
 class BoardPoller:
     """specd の STATUS を定期的に取り、最後の結果を持つ。"""
 
-    def __init__(self, spec, interval_s: float = 1.0, timeout_s: float = 2.0):
+    def __init__(self, spec, interval_s: float = 1.0, timeout_s: float = 2.0, hk_url: Optional[str] = None):
         self.spec = spec
         self.interval_s = interval_s
         self.timeout_s = timeout_s
@@ -43,11 +46,18 @@ class BoardPoller:
         self.t_try: Optional[float] = None
         self.error: Optional[str] = None               # 最後の問い合わせの失敗（取れたら None）
         self.busy = False                              # LC が制御の口を使っていて飛ばした
+        cfg = getattr(spec, "cfg", None)
+        if hk_url is None and getattr(cfg, "hk_port", None):
+            hk_url = f"http://{cfg.host}:{cfg.hk_port}/"
+        self.hk_url = hk_url
+        self.hk: Optional[Dict[str, object]] = None   # 最後に取れたボードの状態（boardhk.py）
+        self.hk_t_ok: Optional[float] = None
+        self.hk_error: Optional[str] = None
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     def start(self) -> None:
-        if self.supported:
+        if self.supported or self.hk_url:
             self._thread = threading.Thread(target=self._run, daemon=True, name="status-board")
             self._thread.start()
 
@@ -55,6 +65,21 @@ class BoardPoller:
         self._stop.set()
 
     def poll(self) -> None:
+        if self.supported:
+            self.poll_status()
+        if self.hk_url:
+            self.poll_hk()
+
+    def poll_hk(self) -> None:
+        try:
+            with urllib.request.urlopen(self.hk_url, timeout=self.timeout_s) as r:
+                self.hk = json.loads(r.read().decode())
+            self.hk_t_ok = time.time()
+            self.hk_error = None
+        except Exception as e:
+            self.hk_error = str(e) or type(e).__name__
+
+    def poll_status(self) -> None:
         self.t_try = time.time()
         try:
             st = self.spec.status_nowait(self.timeout_s)
@@ -77,9 +102,12 @@ class BoardPoller:
             self._stop.wait(max(0.0, self.interval_s - (time.monotonic() - t0)))
 
     def snapshot(self) -> Dict[str, object]:
+        hk = None
+        if self.hk_url:
+            hk = {"t_ok": self.hk_t_ok, "error": self.hk_error, "data": self.hk}
         if not self.supported:
-            return {"mode": "fake"}
-        d: Dict[str, object] = {"mode": "board", "t_ok": self.t_ok, "t_try": self.t_try,
+            return {"mode": "fake", "hk": hk} if hk else {"mode": "fake"}
+        d: Dict[str, object] = {"mode": "board", "hk": hk, "t_ok": self.t_ok, "t_try": self.t_try,
                                 "error": self.error, "busy": self.busy, "status": self.status}
         info = getattr(self.spec, "recorder_info", None)
         if info is not None:

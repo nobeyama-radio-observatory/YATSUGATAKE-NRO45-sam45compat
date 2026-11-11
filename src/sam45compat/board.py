@@ -71,6 +71,8 @@ class BoardConfig:
     # 1PPS なしの試験（2026-11-11）: START force=1 で時刻なしで取り、この計算機の時計で時刻を付ける（recorder.py）。
     # ずれは数 ms〜数十 ms。流れ（記録 → 束ね → YKSP のロギング → マージ → 配信）の確かめ用で、科学には使えない
     no_pps: bool = False
+    # ボードの状態（温度・電源・CPU・メモリ）の常駐（tools/boardhk.py）のポート。None なら読まない（状態のページ用）
+    hk_port: Optional[int] = None
 
 
 class BoardSpectrometer:

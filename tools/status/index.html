@@ -49,6 +49,14 @@ td.ok, td.warn, td.bad { background: none; font-weight: 600; }
 .adc div { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
 .adc b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
 .adc span { color: var(--mute); font-size: 12px; }
+.adc div.ok, .adc div.warn, .adc div.bad { border-color: currentColor; }
+.cpu { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; align-items: center; margin: 6px 0 10px; }
+.bar { height: 10px; border-radius: 5px; background: var(--idle-bg); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--ok); }
+.bar i.warn { background: var(--warn); }
+.bar i.bad { background: var(--bad); }
+details { margin-top: 6px; }
+summary { cursor: pointer; color: var(--mute); }
 ul { margin: 0; padding-left: 18px; }
 code { font-size: 12px; }
 body.stale main { opacity: .45; }
@@ -64,6 +72,7 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
 <main>
   <section><h2>暫定 LC <span id="lc-tag"></span></h2><div id="lc"></div></section>
   <section><h2>RFSoC（specd）<span id="bd-tag"></span></h2><div id="bd"></div></section>
+  <section class="wide"><h2>RFSoC のボード（温度・電源・負荷）<span id="hk-tag"></span></h2><div id="hk"></div></section>
   <section class="wide"><h2>窓の設定 <span id="win-tag"></span></h2><div id="win" class="scroll"></div></section>
   <section class="wide"><h2>今の観測</h2><div id="obs" class="scroll"></div></section>
   <section class="wide"><h2>終わった観測（新しい順）</h2><div id="recent" class="scroll"></div></section>
@@ -85,7 +94,7 @@ function el(tag, attrs, ...kids) {
   for (const [k, v] of Object.entries(attrs || {})) {
     if (k === "class") e.className = v; else if (k === "title") e.title = v; else e.setAttribute(k, v);
   }
-  for (const k of kids.flat()) if (k != null) e.append(k instanceof Node ? k : String(k));
+  for (const k of kids.flat(Infinity)) if (k != null) e.append(k instanceof Node ? k : String(k));
   return e;
 }
 const tag = (cls, text) => el("span", { class: "tag " + cls }, text);
@@ -251,6 +260,72 @@ function renderBoard(b, now) {
   return [level, label || state];
 }
 
+// ボードの常駐（tools/boardhk.py）。閾値は仮（2026-11-11）。Wide で落ちたときは VCCINT 41.8 A・70.8 ℃ で上昇中だった（plan.md の 7 章）
+const TEMP_WARN_C = 65, TEMP_BAD_C = 75;
+const VCCINT_WARN_A = 35, VCCINT_BAD_A = 40;
+const PCT_WARN = 85, PCT_BAD = 95;
+const ACQ_CPU = "cpu3";       // specd の取得を固定している CPU（specd の --cpu）
+const TEMP_NAME = { ps_temp: "PS（LPD）", remote_temp: "PS（FPD）", pl_temp: "PL" };
+const lv = (v, w, b) => (v == null ? "idle" : v >= b ? "bad" : v >= w ? "warn" : "ok");
+function renderHK(hk, now) {
+  if (!hk) {
+    $("hk-tag").replaceChildren();
+    $("hk").replaceChildren(el("p", { class: "mute" }, "読まない設定（board.hk_port なし）。ボードに tools/boardhk.py を置くと出る"));
+    return "ok";
+  }
+  const d = hk.data;
+  const age = hk.t_ok ? now - hk.t_ok : Infinity;
+  const head = [];
+  let level = "ok";
+  if (hk.error) {
+    level = "warn";
+    head.push(el("p", { class: "warn" }, `ボードの常駐に問い合わせられない: ${hk.error}`, d ? `（下は ${dur(age)}前の値）` : ""));
+  }
+  if (!d) { $("hk").replaceChildren(...head); $("hk-tag").replaceChildren(tag("warn", "未取得")); return "warn"; }
+  if (d.error) head.push(el("p", { class: "warn" }, "読めない値がある: " + d.error));
+
+  const temps = Object.entries(d.temp_c || {}).map(([k, v]) => {
+    const n = k.replace(/^temp\d+_/, "");
+    return [TEMP_NAME[n] || n, v, lv(v, TEMP_WARN_C, TEMP_BAD_C)];
+  });
+  const curr = Object.entries(d.curr_ma || {}).map(([k, v]) => {
+    const a = v / 1000;
+    return [k, a, k === "VCCINT" ? lv(a, VCCINT_WARN_A, VCCINT_BAD_A) : "idle"];
+  });
+  const tiles = el("div", { class: "adc" },
+    temps.map(([n, v, c]) => el("div", { class: c === "ok" ? "" : c }, el("span", {}, "温度 " + n), el("b", { class: c === "ok" ? "" : c }, v.toFixed(1) + " ℃"))),
+    curr.map(([n, a, c]) => el("div", { class: c === "ok" || c === "idle" ? "" : c }, el("span", {}, "電流 " + n), el("b", { class: c === "ok" || c === "idle" ? "" : c }, a.toFixed(2) + " A"))));
+  for (const [, , c] of [...temps, ...curr]) level = worst(level, c === "idle" ? "ok" : c);
+
+  const cpus = Object.entries(d.cpu_pct || {});
+  for (const [k, v] of cpus) if (k !== ACQ_CPU) { const c = lv(v, PCT_WARN, PCT_BAD); level = worst(level, c === "idle" ? "ok" : c); }
+  const cpu = el("div", { class: "cpu" }, cpus.map(([k, v]) => {
+    // 取得の CPU は使い切るのが普通なので、色で知らせない（ほかの CPU と全体の負荷で見る）
+    const c = k === ACQ_CPU ? "ok" : lv(v, PCT_WARN, PCT_BAD);
+    const bar = el("div", { class: "bar" }, el("i", { class: c === "ok" ? "" : c }));
+    bar.firstChild.style.width = Math.min(100, v || 0) + "%";
+    return [el("span", {}, k.toUpperCase() + (k === ACQ_CPU ? "（取得）" : "")), bar, el("span", {}, v == null ? "-" : v.toFixed(0) + " %")];
+  }));
+  const mem = lv(d.mem_used_pct, PCT_WARN, PCT_BAD), shm = lv(d.shm_used_pct, PCT_WARN, PCT_BAD), root = lv(d.root_used_pct, PCT_WARN, PCT_BAD);
+  level = worst(level, mem === "idle" ? "ok" : mem, shm === "idle" ? "ok" : shm, root === "idle" ? "ok" : root);
+  const volts = Object.entries(d.volt_mv || {});
+  $("hk").replaceChildren(...head, tiles,
+    el("h2", {}, "CPU の使用率"), cpu,
+    kvTable([
+      ["負荷（1・5・15 分）", (d.load || []).map((x) => x.toFixed(2)).join(" ・ ")],
+      ["メモリ", `${d.mem_used_pct} %（全 ${(d.mem_total_mb / 1024).toFixed(1)} GB）`, mem === "ok" ? null : mem],
+      ["/dev/shm", d.shm_used_pct + " %", shm === "ok" ? null : shm],
+      ["/（SD カード）", d.root_used_pct + " %", root === "ok" ? null : root],
+      ["起動してから", dur(d.uptime_s)],
+      ["値の時刻", hk.t_ok ? `${hms(hk.t_ok)}（${dur(age)}前）` : "-", age > BOARD_STALE_S ? "warn" : null],
+    ]),
+    volts.length ? el("details", {}, el("summary", {}, `電圧（AMS、${volts.length} ch）`),
+      grid(["名前", "mV"], volts.map(([k, v]) => [k, v.toFixed(1)]))) : "");
+  if (age > BOARD_STALE_S) level = worst(level, "warn");
+  $("hk-tag").replaceChildren(tag(level, BANNER[level]));
+  return level;
+}
+
 const RANK = { ok: 0, idle: 0, warn: 1, bad: 2 };
 const worst = (...ls) => ls.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), "ok");
 const BANNER = { ok: "正常", warn: "注意", bad: "異常" };
@@ -284,6 +359,7 @@ function render() {
   if (!lc.error) { renderWindows(lc, now); renderRecent(lc); renderDeliver(lc); renderNotices(lc); }
   const diskLevel = lc.error ? "ok" : renderDisk(lc);
   const [bdLevel, bdLabel] = renderBoard(last.board || {}, now);
+  const hkLevel = renderHK((last.board || {}).hk, now);
   $("bd-tag").replaceChildren(tag(bdLevel, bdLabel));
 
   document.body.classList.toggle("stale", age > STALE_S);
@@ -295,10 +371,10 @@ function render() {
     return;
   }
   $("lc-tag").replaceChildren(tag(lcLevel, lcLevel === "ok" ? "動いている" : "異常"));
-  const lv = worst(lcLevel, obsLevel, diskLevel, bdLevel);
-  banner.className = lv;
-  banner.textContent = BANNER[lv];
-  document.title = (lv === "ok" ? "" : lv === "warn" ? "△ " : "✕ ") + "YKSP 状態";
+  const all = worst(lcLevel, obsLevel, diskLevel, bdLevel, hkLevel);
+  banner.className = all;
+  banner.textContent = BANNER[all];
+  document.title = (all === "ok" ? "" : all === "warn" ? "△ " : "✕ ") + "YKSP 状態";
 }
 
 load();

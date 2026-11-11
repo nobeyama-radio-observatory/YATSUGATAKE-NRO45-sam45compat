@@ -46,6 +46,7 @@
     "bits": {"fine": "sam45-fine", "wide": "sam45-wide"},
     "tmp_dir": "/home/yk/bklog/tmp",
     "keep_tmp": false,
-    "no_pps": false
+    "no_pps": false,
+    "hk_port": 51010
   }
 }

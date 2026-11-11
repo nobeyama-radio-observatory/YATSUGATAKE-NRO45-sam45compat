@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# RFSoC 4x2 の上で、ボードの状態（温度・電源・CPU・メモリ）を返す常駐を起こす（tools/boardhk.py。
+# 状態のページの「ボード」の欄。docs/operation/server-setup-provisional.md の 5.5）。
+# 置き方（ボードの上で）:
+#   sudo install -m 755 boardhk.py /usr/local/bin/sam45compat-boardhk.py
+#   sudo cp sam45compat-boardhk.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now sam45compat-boardhk
+# 確かめる: curl -s http://localhost:51010/ | python3 -m json.tool
+#
+# specd の取得は CPU 3 に固定されている（specd の --cpu）。こちらは CPU 0 に置き、優先度を最低にする。
+[Unit]
+Description=sam45compat ボードの状態（温度・電源・CPU・メモリ）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/sam45compat-boardhk.py --port 51010
+Restart=always
+RestartSec=10
+CPUAffinity=0
+Nice=19
+IOSchedulingClass=idle
+# sysfs と /proc を読むだけなので、権限を持たせない
+DynamicUser=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

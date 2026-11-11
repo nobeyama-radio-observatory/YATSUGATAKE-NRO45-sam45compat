@@ -351,6 +351,37 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
 
    ブラウザで開き、`sudo systemctl stop sam45compat-lc` で 5 秒後に「暫定 LC が止まった」になり、`start` で戻ることを見る。
 
+### 5.5 RFSoC のボードの状態（温度・電源・CPU・メモリ。2026-11-11）
+
+状態のページの「RFSoC のボード」の欄のため、ボードの上に小さな常駐（[`tools/boardhk.py`](../../tools/boardhk.py)）を置く。
+sysfs（AMS の温度・電圧、INA220 の電流）と `/proc`（CPU・メモリ）を 1 秒ごとに読み、ポート 51010 で JSON を返す。
+specd には触れない。CPU 0・優先度最低で動かす（specd の取得は CPU 3）。
+
+1. この計算機から写す（`<ユーザー>` はボードのログインの名前）:
+
+   ```sh
+   scp tools/boardhk.py tools/systemd/sam45compat-boardhk.service <ユーザー>@$B:/tmp/
+   ```
+
+2. ボードの上で入れる:
+
+   ```sh
+   sudo install -m 755 /tmp/boardhk.py /usr/local/bin/sam45compat-boardhk.py
+   sudo cp /tmp/sam45compat-boardhk.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now sam45compat-boardhk
+   journalctl -u sam45compat-boardhk -n 5 --no-pager      # 「AMS <n> ch、INA220 ['VCCINT', ...]」
+   curl -s http://localhost:51010/ | python3 -m json.tool | head -30
+   ```
+
+   `AMS 0 ch` や INA220 が空なら、sysfs に見えていない（その値は出ない。ほかは出る）。
+
+3. 暫定 LC の設定の `board` に `"hk_port": 51010` を入れ（`config/bklog.json` には入っている）、LC を起こし直す。
+   この計算機から `curl -s http://$B:51010/ | head -c 200` で届くことを確かめる
+
+- 直したら: 手順 1・2 の `install` と `systemctl restart sam45compat-boardhk`（サービスのファイルを変えたら `cp` と `daemon-reload` も）
+- 閾値（`tools/status/index.html` の `TEMP_WARN_C` など）は仮。実機の運転で決める
+
 ## 6. まだやらないこと
 
 - **COSMOS のネットワークへの接続と、SAM45 のロギングのマウント**は、SAM45 の運用に影響しうるので、
@@ -378,3 +409,4 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
 | 2026-11-11 | マージの計算機に `/srv/download` を NFS で公開し、yk のマージ専用の ssh の鍵を登録した（5.3）。`authorized_keys` に `from=`・`restrict` を入れた。マウントして書き込めること、ssh で入れることを確かめた |
 | 2026-11-11 | 状態のページの手順（5.4）を書いた（まだ仮機に入れていない） |
 | 2026-11-11 | 暫定 LC のサービスが起こすたびに状態のページの `index.html` を写すようにした。サービスのファイルを直したときの手順（5.1）を足した |
+| 2026-11-11 | RFSoC のボードの状態の常駐（5.5）の手順を書いた（まだボードに入れていない） |

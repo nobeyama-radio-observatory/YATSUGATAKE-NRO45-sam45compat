@@ -138,5 +138,48 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(s["status"], {"state": "RUN"})    # 最後に取れた値（t_ok で古さがわかる）
 
 
+    def test_boardhk(self):
+        """ボードの常駐（tools/boardhk.py）をこの計算機で起こし、BoardPoller で読む（AMS・INA220 は無くてよい）。"""
+        import sys
+        import threading
+        from http.server import HTTPServer
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+        import boardhk
+        smp = boardhk.Sampler(0.05)
+        smp.start()
+        time.sleep(0.2)
+        srv = HTTPServer(("127.0.0.1", 0), boardhk.make_handler(smp))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            url = f"http://127.0.0.1:{srv.server_address[1]}/"
+            p = stm.BoardPoller(_Busy(ret={"state": "IDLE"}), hk_url=url)
+            p.poll()
+            s = p.snapshot()
+            self.assertEqual(s["status"], {"state": "IDLE"})
+            hk = s["hk"]
+            self.assertIsNone(hk["error"])
+            d = hk["data"]
+            self.assertIn("cpu0", d["cpu_pct"])
+            self.assertTrue(0 <= d["mem_used_pct"] <= 100)
+            self.assertEqual(len(d["load"]), 3)
+            # 常駐が止まっている: 前の値を残し、失敗を出す
+            p.hk_url = "http://127.0.0.1:9/"
+            p.poll()
+            s = p.snapshot()
+            self.assertIsNotNone(s["hk"]["error"])
+            self.assertIn("cpu_pct", s["hk"]["data"])
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_hk_from_board_config(self):
+        from sam45compat.board import BoardConfig
+
+        class _Spec(_Busy):
+            cfg = BoardConfig(host="192.0.2.1", hk_port=51010)
+        self.assertEqual(stm.BoardPoller(_Spec()).hk_url, "http://192.0.2.1:51010/")
+        self.assertIsNone(stm.BoardPoller(_Busy()).hk_url)
+
+
 if __name__ == "__main__":
     unittest.main()
