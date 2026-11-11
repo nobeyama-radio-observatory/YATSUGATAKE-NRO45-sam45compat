@@ -125,8 +125,16 @@ def lc_snapshot(lc: "LC") -> Dict[str, object]:
         if p and p not in seen:
             seen.add(p)
             disks.append(_disk(p))
+    # 窓の設定: 今の観測のもの。無ければ直前の観測のもの（ボードは次の SET まで同じ設定のまま）
+    windows = None
+    for src, cur in [(x, True) for x in sessions] + [(x, False) for x in list(lc.recent)]:
+        if src.get("windows"):
+            windows = {"log_id": src["log_id"], "current": cur, "bit": src.get("bit"),
+                       "t": src.get("t_start"), "windows": src["windows"], "skipped": src.get("skipped", {})}
+            break
     return {
         "loop_age_s": round(now_m - lc._last_loop, 1),
+        "windows": windows,
         "hang_s": cfg.hang_s,
         "output": cfg.output,
         "dirs": dirs,

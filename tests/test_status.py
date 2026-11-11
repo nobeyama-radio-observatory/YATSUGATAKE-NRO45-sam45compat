@@ -67,6 +67,16 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(s["arrays"], ["A05", "A06", "A07", "A08"])
         self.assertGreater(s["n_l2"], 0)
         self.assertEqual(d["lc"]["recent"], [])
+        win = d["lc"]["windows"]
+        self.assertEqual((win["log_id"], win["current"], win["bit"]), ("20260101000000", True, "fine"))
+        self.assertEqual([(x["adc"], x["stream"], x["array"]) for x in win["windows"]],
+                         [("A", 0, "A05"), ("B", 0, "A06"), ("C", 0, "A07"), ("D", 0, "A08")])
+        x = win["windows"][0]
+        self.assertAlmostEqual(x["if_mhz"], 3000.0, delta=1.0)               # _obs の既定（A0.if=3000）
+        self.assertLess(x["if_lo_mhz"], x["if_mhz"])
+        self.assertLess(x["if_mhz"], x["if_hi_mhz"])
+        self.assertLess(x["sky_lo_ghz"], x["sky_hi_ghz"])
+        self.assertIn("A0.if=", x["set"])
         self.assertTrue(d["lc"]["dirs"][0]["readable"])
         self.assertEqual(d["lc"]["disks"][0]["path"], self.dir)
         # 終わり
@@ -78,6 +88,7 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(d["lc"]["sessions"], [])
         (r,) = d["lc"]["recent"]
         self.assertEqual((r["phase"], r["n_l2"], r["n_invalid"]), ("終わり", 16, 0))
+        self.assertEqual((d["lc"]["windows"]["log_id"], d["lc"]["windows"]["current"]), ("20260101000000", False))
         self.assertFalse(os.path.exists(self.path + ".tmp"))
 
     def test_prepare_failure_and_notices(self):

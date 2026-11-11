@@ -33,6 +33,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Protocol, Union
 
+import numpy as np
+
 from . import combine as cb
 from . import deliver as dv
 from . import mapping as mp
@@ -172,7 +174,8 @@ class Session:
                 "skipped": {sl.array_label(i): r for i, r in plan.skipped.items()} if plan is not None else {},
                 "n_l2": self.n_written, "n_invalid": self.n_invalid, "pending": len(self.pending),
                 "t_start": self.t_start, "t_last_l2": self.t_last_l2,
-                "notime": getattr(b.dumps, "n_notime", 0) if b is not None else 0}
+                "notime": getattr(b.dumps, "n_notime", 0) if b is not None else 0,
+                "windows": window_info(plan) if plan is not None else []}
 
     # ---- 1 周 ----
 
@@ -320,6 +323,23 @@ class Session:
         if self._out is not None:
             self._out.close()
             self._out = None
+
+
+def window_info(plan: mp.Plan) -> List[Dict[str, object]]:
+    """状態のページに出す窓の設定（ADC・窓の順）。周波数は ch 1..4096 の端（IF は記録の昇順、sky は L2 の順）。"""
+    out = []
+    for i, w in sorted(plan.windows.items(), key=lambda x: (x[1].slot.adc, x[1].slot.stream)):
+        ifs = w.record_if_axis()
+        sky = np.asarray(w.sky_hz, dtype=float)
+        ok = np.isfinite(sky)
+        out.append({"array": sl.array_label(i), "adc": w.slot.adc, "stream": w.slot.stream, "kind": w.kind,
+                    "if_mhz": round(float(w.if_mhz), 6), "if_lo_mhz": round(float(ifs[0]), 6),
+                    "if_hi_mhz": round(float(ifs[-1]), 6), "bw_mhz": w.bw_mhz, "df_khz": round(w.df_mhz * 1e3, 6),
+                    "sky_lo_ghz": round(float(sky[ok].min()) / 1e9, 6) if ok.any() else None,
+                    "sky_hi_ghz": round(float(sky[ok].max()) / 1e9, 6) if ok.any() else None,
+                    "reverse": bool(w.reverse),
+                    "set": " ".join(f"{k}={v}" for k, v in w.set_keys.items())})
+    return out
 
 
 def mirror_sources(obs: sl.Record, mirror: Dict[str, str]) -> Dict[int, int]:

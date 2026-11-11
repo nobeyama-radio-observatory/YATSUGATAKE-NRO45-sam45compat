@@ -64,6 +64,7 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
 <main>
   <section><h2>暫定 LC <span id="lc-tag"></span></h2><div id="lc"></div></section>
   <section><h2>RFSoC（specd）<span id="bd-tag"></span></h2><div id="bd"></div></section>
+  <section class="wide"><h2>窓の設定 <span id="win-tag"></span></h2><div id="win" class="scroll"></div></section>
   <section class="wide"><h2>今の観測</h2><div id="obs" class="scroll"></div></section>
   <section class="wide"><h2>終わった観測（新しい順）</h2><div id="recent" class="scroll"></div></section>
   <section><h2>配信・マージ</h2><div id="dl"></div></section>
@@ -144,6 +145,27 @@ function renderObs(lc, now) {
   if (ss.some((s) => PHASE[s.phase] === "bad" || s.notime)) return "bad";
   if (ss.some((s) => s.n_invalid)) return "warn";
   return "ok";
+}
+
+const f3 = (v) => (v == null ? "-" : Number(v).toFixed(3));
+const f6 = (v) => (v == null ? "-" : Number(v).toFixed(6));
+function renderWindows(lc, now) {
+  const w = lc.windows;
+  if (!w) {
+    $("win-tag").replaceChildren();
+    $("win").replaceChildren(el("p", { class: "mute" }, "LC を起こしてから、まだ観測が無い"));
+    return;
+  }
+  $("win-tag").replaceChildren(w.current ? tag("ok", "今の観測") : tag("idle", "直前の観測"));
+  const note = el("p", { class: "mute" }, `${w.log_id}（${w.bit || "-"}、${mdhms(w.t)} から）`,
+    w.current ? "" : "。観測が終わっても、ボードは次の観測の SET までこの設定のまま");
+  const skipped = Object.entries(w.skipped || {});
+  $("win").replaceChildren(note, grid(
+    ["ADC・窓", "Array", "IF 下端〜上端 [MHz]", "IF 2047ch [MHz]", "帯域 [MHz]", "分解能 [kHz]", "天空周波数 [GHz]", "ch の向き", "SET"],
+    w.windows.map((x) => [`ADC_${x.adc} 窓 ${x.stream}`, x.array, `${f3(x.if_lo_mhz)} 〜 ${f3(x.if_hi_mhz)}`, f3(x.if_mhz),
+      x.bw_mhz, f3(x.df_khz), `${f6(x.sky_lo_ghz)} 〜 ${f6(x.sky_hi_ghz)}`, x.reverse ? "IF の逆順" : "IF の昇順",
+      el("code", {}, x.set)])),
+    skipped.length ? el("p", {}, tag("warn", "取らない"), " ", skipped.map(([a, r]) => `${a}: ${r}`).join(" ・ ")) : "");
 }
 
 function renderRecent(lc) {
@@ -259,7 +281,7 @@ function render() {
   const lcLevel = renderLC(last, now);
   const lc = last.lc || {};
   const obsLevel = lc.error ? "ok" : renderObs(lc, now);
-  if (!lc.error) { renderRecent(lc); renderDeliver(lc); renderNotices(lc); }
+  if (!lc.error) { renderWindows(lc, now); renderRecent(lc); renderDeliver(lc); renderNotices(lc); }
   const diskLevel = lc.error ? "ok" : renderDisk(lc);
   const [bdLevel, bdLabel] = renderBoard(last.board || {}, now);
   $("bd-tag").replaceChildren(tag(bdLevel, bdLabel));
