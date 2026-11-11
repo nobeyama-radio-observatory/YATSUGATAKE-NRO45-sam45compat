@@ -16,7 +16,7 @@ SAM45 のロギングには手を入れない（読むだけ）。SAM45 のロ�
 - [ ] YATSUGATAKE の版は **v1.4.0**（このリポジトリの `external/YATSUGATAKE` と同じ）
 - [ ] ボードの `bits.json` に SAM45-Fine と SAM45-Wide がある。**その名前を設定の `board.bits` に書く**（下の「設定」）
 - [ ] 10 MHz・1PPS を SAM45 と同じ基準からつなぐ
-- [ ] specd を起こす（YATSUGATAKE の [`docs/user/specd.md`](../../external/YATSUGATAKE/docs/user/specd.md)）。時刻を答えられることを確かめる:
+- [ ] specd を起こす（YATSUGATAKE の [`docs/user/specd.md`](../../external/YATSUGATAKE/docs/user/specd.md)。仮機ではボードの systemd のサービス [`tools/systemd/specd.service`](../../tools/systemd/specd.service)、[`server-setup-provisional.md`](server-setup-provisional.md) の 5.6）。時刻を答えられることを確かめる:
   ```bash
   python3 external/YATSUGATAKE/sw/pynq/specctl.py --host $B STATUS     # time_ok=1・state=IDLE
   python3 external/YATSUGATAKE/sw/pynq/specctl.py --host $B BITS       # bits= に設定の名前がある

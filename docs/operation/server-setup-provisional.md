@@ -382,6 +382,72 @@ specd には触れない。CPU 0・優先度最低で動かす（specd の取得
 - 直したら: 手順 1・2 の `install` と `systemctl restart sam45compat-boardhk`（サービスのファイルを変えたら `cp` と `daemon-reload` も）
 - 閾値（`tools/status/index.html` の `TEMP_WARN_C` など）は仮。実機の運転で決める
 
+### 5.6 RFSoC 4x2 をつなぐ（ssh と specd のサービス。2026-11-11）
+
+RFSoC 4x2 は、仮機のボード用の NIC につなぐ。ボードの IP は `$B`。
+
+**ssh の鍵（仮機の yk）**: ボード用に別の鍵を作り、`xilinx` に登録する。
+
+```bash
+ssh-keygen -t ed25519 -C "yk@<仮機> rfsoc" -f ~/.ssh/id_ed25519_rfsoc
+ssh-copy-id -i ~/.ssh/id_ed25519_rfsoc.pub xilinx@$B     # 1 回目はホストの鍵を yes で受け入れる
+ssh -i ~/.ssh/id_ed25519_rfsoc -o BatchMode=yes xilinx@$B 'hostname; uptime'
+```
+
+yk の `~/.ssh/config` に書いて、`ssh rfsoc` で入れるようにする:
+
+```
+Host rfsoc
+    HostName <RFSoC 4x2 の IP>
+    User xilinx
+    IdentityFile ~/.ssh/id_ed25519_rfsoc
+```
+
+- ボードの初めのパスワード（`xilinx`）は、鍵で入れることを確かめてから `passwd` で変える
+- SD カードを書き直すとホストの鍵が変わる。仮機で `ssh-keygen -R $B` をしてから入り直す
+
+**specd のサービス（ボード）**: [`tools/systemd/specd.service`](../../tools/systemd/specd.service)。ボードの電源を入れると specd が起き、落ちたら起こし直す。
+手で起こすとき（`sudo -E $(which python3)`）と同じ環境を、`/etc/profile.d/` の `boardname.sh`・`pynq_venv.sh`・`xrt_setup.sh` から読む。
+
+```bash
+scp tools/systemd/specd.service tools/systemd/specd.sudoers rfsoc:
+ssh rfsoc
+ls /etc/profile.d/                   # boardname.sh・pynq_venv.sh・xrt_setup.sh があるか
+# specd.service の WorkingDirectory を bit の版のディレクトリ（cd ~/sam45-fine-<版> && pwd）に直す
+sudo cp specd.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now specd
+journalctl -u specd -f               # 制御の口・データの口を開いた行が出るまで（数十秒）
+```
+
+- `No module named 'pynq'` なら環境の読み込みが足りない（`/etc/profile.d/` の名前を合わせる）
+- 手で起こした specd が動いていれば、先に止める（制御の口は 1 接続まで、ポートも重なる）
+- **今は 10 MHz・1PPS なし**なので `--clkin 0 --ref 10` を付けていない。つないだら `ExecStart` の `specd.py` に足し、暫定 LC の `board.no_pps` を `false` に戻す
+
+**仮機から操作する（ボード）**: [`tools/systemd/specd.sudoers`](../../tools/systemd/specd.sudoers) を `/etc/sudoers.d/specd` に置き、`xilinx` が specd のサービスだけをパスワードなしで操作できるようにする。
+
+```bash
+sudo install -m 440 specd.sudoers /etc/sudoers.d/specd
+sudo visudo -c                       # 「parsed OK」。書き間違えると sudo が使えなくなる
+which systemctl                      # /usr/bin/systemctl でなければ、sudoers のパスを合わせる
+```
+
+仮機から:
+
+```bash
+ssh rfsoc sudo systemctl restart specd
+ssh rfsoc sudo systemctl status specd --no-pager
+ssh rfsoc journalctl -u specd -n 50 --no-pager
+python3 external/YATSUGATAKE/sw/pynq/specctl.py --host $B STATUS    # state=IDLE（1PPS なしでは time_ok=0）
+```
+
+暫定 LC のサービスからは specd を起こさない（`ExecStartPre` に ssh を入れない）。ボードが止まっていても暫定 LC は起き、
+specd が起きていない観測は「分光計の準備に失敗」として知らせ、次の観測でまた試みる。
+
+**暫定 LC を実機につなぐ**: `config/bklog.json` を元に `config/bklog.local.json`（git に入らない）を作り、`merge_cmd`・`merge_root` を入れ、
+`board.host`・`board.bits`（`specctl.py BITS` の名前）を実機に合わせる。1PPS なしの間は `board.no_pps: true`（[`stage1.md`](stage1.md) の「設定」）。
+サービスの `ExecStart` は `systemctl edit sam45compat-lc` で `--config config/bklog.local.json`（`--fake` なし）にする。
+
 ## 6. まだやらないこと
 
 - **COSMOS のネットワークへの接続と、SAM45 のロギングのマウント**は、SAM45 の運用に影響しうるので、
@@ -410,3 +476,4 @@ specd には触れない。CPU 0・優先度最低で動かす（specd の取得
 | 2026-11-11 | 状態のページの手順（5.4）を書いた（まだ仮機に入れていない） |
 | 2026-11-11 | 暫定 LC のサービスが起こすたびに状態のページの `index.html` を写すようにした。サービスのファイルを直したときの手順（5.1）を足した |
 | 2026-11-11 | RFSoC のボードの状態の常駐（5.5）の手順を書いた（まだボードに入れていない） |
+| 2026-11-11 | RFSoC 4x2 をつないだ。yk の ssh の鍵、ボードの specd のサービスと sudoers（5.6）。暫定 LC を実機（`board.no_pps`、1PPS・10 MHz なし）で動かした |

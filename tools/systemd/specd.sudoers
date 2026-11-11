@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# ボードの /etc/sudoers.d/specd（0440）。xilinx が specd のサービスだけをパスワードなしで操作できる
+# （yk-c から ssh rfsoc sudo systemctl restart specd。docs/operation/server-setup-provisional.md の 5.6）。
+# 入れたら必ず sudo visudo -c（書き間違えると sudo が使えなくなる）。systemctl のパスは which systemctl に合わせる
+xilinx ALL=(root) NOPASSWD: /usr/bin/systemctl start specd, /usr/bin/systemctl stop specd, /usr/bin/systemctl restart specd, /usr/bin/systemctl status specd
