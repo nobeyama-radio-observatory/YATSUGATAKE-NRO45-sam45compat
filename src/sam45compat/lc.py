@@ -260,7 +260,7 @@ class Session:
         self.builder.dumps = self.spec.dumps()
         if cfg.ql_path and self.builder.plan.windows:
             from .ql import IntegrationQl
-            self.ql = IntegrationQl(self.name.log_id, self.builder.plan, cfg.ql_nbin)
+            self.ql = IntegrationQl(self.name.log_id, self.builder.plan, cfg.ql_nbin, obs=obs.s)
 
     def _flush_pending(self, now: float, final: bool) -> None:
         if self.builder is None:

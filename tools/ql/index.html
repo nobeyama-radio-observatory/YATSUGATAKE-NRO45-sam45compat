@@ -42,6 +42,9 @@ h2 { font-size: 14px; margin: 0 0 2px; display: flex; gap: 8px; align-items: bas
 h2 small { color: var(--mute); font-weight: 400; }
 .sub { color: var(--mute); font-size: 12px; margin: 6px 0 2px; display: flex; gap: 8px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
 .sub b { color: var(--fg); font-weight: 500; }
+.rest { display: none; gap: 4px; align-items: center; color: var(--mute); font-size: 12px; font-weight: 400; margin-left: auto; }
+body.vlsr .rest { display: flex; }
+.rest input { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; width: 9em; }
 canvas { display: block; width: 100%; height: 190px; touch-action: none; }
 .ok { color: var(--ok); background: var(--ok-bg); }
 .warn { color: var(--warn); background: var(--warn-bg); }
@@ -57,7 +60,7 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
   <span id="banner" class="idle">読み込み中</span>
   <span id="info"></span>
   <div class="ctl">
-    <label>横軸 <select id="xaxis"><option value="sky">天空周波数 [GHz]</option><option value="if">IF [MHz]</option><option value="ch">ch</option></select></label>
+    <label>横軸 <select id="xaxis"><option value="sky">天空周波数 [GHz]</option><option value="vlsr">Vlsr [km/s]</option><option value="if">IF [MHz]</option><option value="ch">ch</option></select></label>
     <label>生 <select id="ymode"><option value="db">dB</option><option value="lin">線形</option></select></label>
     <button id="pause" aria-pressed="false">一時停止</button>
     <a href="../status/">状態のページ</a>
@@ -65,7 +68,8 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
 </header>
 <main id="grid"></main>
 <footer>上: 直近の生のスペクトル（10.24 ms のダンプの平均。観測中だけ）。下: 積分ごとの Ta* = Tsys × (ON − OFF) / OFF（直近の ON と、その前の OFF。Tsys が決まる前は比のまま）。
-グラフの上にマウスを置くと値を出す。</footer>
+グラフの上にマウスを置くと値を出す。
+Vlsr = V<sub>src</sub> + c·(1 − f / f<sub>rest</sub>)（電波の定義。V<sub>src</sub> は L1 の dstrv。ロギングの周波数はドップラー追尾した系）。f<sub>rest</sub> の既定は L1 の dcent_freq（丸めてあることがあるので、線の静止周波数を窓ごとに入れられる）。</footer>
 <script>
 "use strict";
 const STALE_S = 5;
@@ -180,21 +184,43 @@ const cards = {};
 function card(key) {
   if (cards[key]) return cards[key];
   const sec = document.createElement("section");
-  sec.innerHTML = `<h2><span class="t"></span><small class="s"></small></h2>
+  sec.innerHTML = `<h2><span class="t"></span><small class="s"></small>
+    <label class="rest">静止周波数 <input class="f0" inputmode="decimal" spellcheck="false"> GHz</label></h2>
     <div class="sub r"></div><canvas class="raw"></canvas>
     <div class="sub a"></div><canvas class="ta"></canvas>`;
   const c = { sec, t: sec.querySelector(".t"), s: sec.querySelector(".s"), r: sec.querySelector(".r"), a: sec.querySelector(".a"),
-    raw: sec.querySelector("canvas.raw"), ta: sec.querySelector("canvas.ta") };
+    raw: sec.querySelector("canvas.raw"), ta: sec.querySelector("canvas.ta"), f0: sec.querySelector("input.f0"), def0: null };
+  c.f0.addEventListener("change", () => {
+    const v = parseFloat(c.f0.value);
+    try {
+      if (v > 0 && v !== c.def0) localStorage.setItem(restKey(key, c.def0), String(v));
+      else { localStorage.removeItem(restKey(key, c.def0)); c.f0.value = c.def0 ?? ""; }
+    } catch (e) {}
+    render();
+  });
   hoverable(c.raw); hoverable(c.ta);
   cards[key] = c;
   return c;
 }
+// 静止周波数: 窓ごとに入れた値（既定の dcent_freq ごとに覚える。観測が替わって既定が変われば既定に戻る）
+const C_KMS = 299792.458;
+const restKey = (arr, def0) => `ql.rest.${arr}.${def0}`;
+function restGHz(w) {
+  if (!w.rest_ghz) return null;
+  try { const v = parseFloat(localStorage.getItem(restKey(w.array, w.rest_ghz))); if (v > 0) return v; } catch (e) {}
+  return w.rest_ghz;
+}
 function xRange(w, mode) {
+  const f0 = restGHz(w);
+  if (mode === "vlsr" && f0 && last.vel) {
+    const v = (f) => last.vel.vsrc_kms + C_KMS * (1 - f / f0);
+    return [v(w.sky0_ghz), v(w.sky1_ghz)];
+  }
   if (mode === "if") return [w.if0_mhz, w.if1_mhz];
   if (mode === "ch") return [1, 4096];
   return [w.sky0_ghz, w.sky1_ghz];
 }
-const XLABEL = { sky: "天空周波数 [GHz]", if: "IF [MHz]", ch: "ch" };
+const XLABEL = { sky: "天空周波数 [GHz]", vlsr: "Vlsr [km/s]", if: "IF [MHz]", ch: "ch" };
 
 let last = null, fetchErr = null, paused = false;
 function render() {
@@ -204,14 +230,20 @@ function render() {
   const age = now - last.t;
   const stale = !paused && age > STALE_S;
   document.body.classList.toggle("stale", stale);
-  const xm = $("xaxis").value, ym = $("ymode").value;
+  const xsel = $("xaxis").value, ym = $("ymode").value;
+  const xm = xsel === "vlsr" && !last.vel ? "sky" : xsel;     // 速度の情報が無い（模擬など）ときは天空周波数
+  document.body.classList.toggle("vlsr", xm === "vlsr");
   const it = last.integration;
   const rt = last.realtime;
   if (stale) { banner.className = "bad"; banner.textContent = `暫定 LC が止まった（${Math.round(age)} 秒更新なし）`; }
   else if (paused) { banner.className = "warn"; banner.textContent = "一時停止中"; }
   else if (rt) { banner.className = "ok"; banner.textContent = `観測中 ${last.log_id}（${last.bit || "-"}）`; }
   else { banner.className = "idle"; banner.textContent = "観測していない"; }
-  $("info").textContent = `更新 ${hms(last.t)}（${age.toFixed(1)} 秒前）・横軸 ${XLABEL[xm]}` + (fetchErr ? ` ・ 読み込み失敗: ${fetchErr}` : "");
+  const vel = last.vel;
+  const velText = xm === "vlsr" ? `（${vel.object || "-"}・Vsrc ${vel.vsrc_kms.toFixed(2)} km/s` +
+    (vel.vdef !== 1 || vel.vref !== 1 ? `・ivdef ${vel.vdef}・ivref ${vel.vref}: 電波の定義・LSR でないかもしれない` : "") + "）"
+    : xsel === "vlsr" ? "（速度の情報が無いので天空周波数）" : "";
+  $("info").textContent = `更新 ${hms(last.t)}（${age.toFixed(1)} 秒前）・横軸 ${XLABEL[xm]}${velText}` + (fetchErr ? ` ・ 読み込み失敗: ${fetchErr}` : "");
 
   // 窓の並び: 生のスペクトルがあればそれ、無ければ積分ごとのもの
   const wins = (rt && rt.windows) || (it && it.windows) || [];
@@ -229,6 +261,8 @@ function render() {
     keep.push(c.sec);
     c.t.textContent = `${w.array}`;
     c.s.textContent = `ADC_${w.adc} 窓 ${w.stream} ・ ${Math.min(w.sky0_ghz, w.sky1_ghz).toFixed(4)}〜${Math.max(w.sky0_ghz, w.sky1_ghz).toFixed(4)} GHz`;
+    c.def0 = w.rest_ghz ?? null;
+    if (document.activeElement !== c.f0) c.f0.value = restGHz(w) ?? "";
     const [x0, x1] = xRange(w, xm);
     // 生
     const r = rt && rt.windows.find((x) => x.array === w.array);
