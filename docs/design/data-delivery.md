@@ -88,7 +88,7 @@
 | | |
 |---|---|
 | スクリプト | PSW: `mergePSW-Y.sh`、OTF: `mergeOTF-Y.sh`（マージの計算機にある） |
-| 引数 | `<group> <project> <ログ ID> <置き場所> <ロギング>`。置き場所とロギングは、マージの計算機から見たパス（`/cosmos3/45m/bklog/yksp`、`/cosmos3/45m/bklog/yksp/<group>/<project>/logging/YKSP.<指示書名>.<group>.<project>.<ログ ID>`） |
+| 引数 | `<group> <project> <ログ ID> <置き場所>/ <ロギングのフォルダ>/`。置き場所とロギングのフォルダは、マージの計算機から見たパス（`/cosmos3/45m/bklog/yksp/`、`/cosmos3/45m/bklog/yksp/<group>/<project>/logging/`）。ロギングはフォルダで渡し、ログ ID で選ばせる（2026-11-11 に訂正） |
 | 出力 | `/cosmos3/45m/bklog/yksp/<group>/<project>/` の直下（= `/srv/download/<group>/<project>/`） |
 | 起動 | 暫定 LC の利用者（yk）の、マージ専用の鍵（パスフレーズ無し）で ssh。マージの計算機の `authorized_keys` で、`from=`（制御サーバーの管理者のセグメント側の IP）と `restrict` で絞る |
 | NFS | 制御サーバーが `/srv/download` を、**マージの計算機のセグメントにだけ**読み書きで公開する（`all_squash`・`anonuid`/`anongid` = yk）。そのセグメントには管理者しか入れず、観測者は NFS では入れない（Apache を通してだけ取る）。yk として書かせるのは、暫定 LC がマージの出力を移し、0644 に直せるように |
@@ -106,7 +106,7 @@
 - ssh は引数を空白でつないで向こうのシェルに渡すので、差し込む値は英数字と `_./+-` だけにする（ほかの文字があれば、マージせずに知らせる）
 - マージの途中のファイルは `<project>/` の直下で Apache から見える（本人にだけ）。失敗したときに残ったファイルは振り分けず、通知に名前を出す
 - 暫定 LC を止めると、待っていた分は一時置き場に残る。マージに失敗した分は `logging/` にある。どちらも手で:
-  `python3 -m sam45compat.deliver <YKSP のロギング> --kind psw --root /srv/download --merge-root /cosmos3/45m/bklog/yksp --merge-cmd ssh ... {logging}`
+  `python3 -m sam45compat.deliver <YKSP のロギング> --kind psw --config <設定>`（設定の `deliver_root`・`merge_cmd`・`merge_root` を使う）
 
 ## 未確認のこと
 

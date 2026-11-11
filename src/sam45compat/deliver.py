@@ -23,13 +23,15 @@ ssh は引数を空白でつないで向こうのシェルに渡すので、差�
 暫定 LC の見回りを止めないよう、別スレッドで 1 つずつ処理する。
 暫定 LC を止めると、待っていた分は一時置き場に残る。マージに失敗したときは logging/ に移した後なので、そのパスで。
 どちらも手で:
-  python3 -m sam45compat.deliver <YKSP のロギング> --kind psw --root /srv/download [--merge-root ...] [--merge-cmd ...]
+  python3 -m sam45compat.deliver <YKSP のロギング> --kind psw --config <設定>   （設定の deliver_root・merge_cmd・merge_root）
+  python3 -m sam45compat.deliver <YKSP のロギング> --kind psw --root /srv/download   （マージなし）
 """
 
 from __future__ import annotations
 
 import argparse
 import errno
+import json
 import logging
 import os
 import queue
@@ -216,13 +218,21 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description="観測の後の処理を手で行う（マージして、配信の置き場所に移す）")
     ap.add_argument("logging", nargs="+", help="書き終えた YKSP のロギング")
     ap.add_argument("--kind", required=True, choices=KINDS)
-    ap.add_argument("--root", required=True, help="配信の置き場所（45m では /srv/download）")
-    ap.add_argument("--merge-root", default=None, help="マージの計算機から見た置き場所（省けば --root と同じ）")
-    ap.add_argument("--merge-cmd", nargs="+", default=None,
-                    help="マージの命令（{logging} {root} {kind} {log_id} {obs} {group} {project} を差し込む）")
+    ap.add_argument("--config", default=None,
+                    help="暫定 LC の設定（JSON）。deliver_root・merge_cmd・merge_root・merge_timeout_s を使う")
+    ap.add_argument("--root", default=None, help="配信の置き場所（45m では /srv/download）。--config より優先")
+    ap.add_argument("--no-merge", action="store_true", help="設定に merge_cmd があってもマージしない")
     a = ap.parse_args(argv)
+    c = {}
+    if a.config:
+        with open(a.config) as f:
+            c = json.load(f)
+    root = a.root or c.get("deliver_root")
+    if not root:
+        ap.error("--root か、deliver_root のある --config が要る")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    d = Deliverer(a.root, a.merge_cmd, background=False, merge_root=a.merge_root)
+    d = Deliverer(root, None if a.no_merge else c.get("merge_cmd"), background=False,
+                  merge_root=c.get("merge_root"), merge_timeout_s=c.get("merge_timeout_s", 3600.0))
     for p in a.logging:
         d.submit(Job(p, a.kind))
 

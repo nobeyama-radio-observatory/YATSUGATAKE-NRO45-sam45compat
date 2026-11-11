@@ -29,10 +29,10 @@
   "merge_cmd": {
     "psw": ["ssh", "-i", "/home/yk/.ssh/id_ed25519_merge", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
             "<user>@<マージ計算機>", "<マージスクリプトの場所>/mergePSW-Y.sh",
-            "{group}", "{project}", "{log_id}", "{root}", "{logging}"],
+            "{group}", "{project}", "{log_id}", "{root}/", "{root}/{group}/{project}/logging/"],
     "otf": ["ssh", "-i", "/home/yk/.ssh/id_ed25519_merge", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
             "<user>@<マージ計算機>", "<マージスクリプトの場所>/mergeOTF-Y.sh",
-            "{group}", "{project}", "{log_id}", "{root}", "{logging}"]
+            "{group}", "{project}", "{log_id}", "{root}/", "{root}/{group}/{project}/logging/"]
   },
   "merge_root": "/cosmos3/45m/bklog/yksp",
   "merge_timeout_s": 3600.0,

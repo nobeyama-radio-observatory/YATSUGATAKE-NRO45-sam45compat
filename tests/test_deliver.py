@@ -99,6 +99,14 @@ class TestDeliver(unittest.TestCase):
         self.assertTrue(os.path.exists(lg))
         self.assertTrue(os.path.exists(os.path.join(self.root, "alice", "proj1", "psw", "20261110120000.raw")))
 
+    def test_cli_config(self):
+        import json
+        cfg = os.path.join(self.tmp.name, "c.json")
+        with open(cfg, "w") as f:
+            json.dump({"deliver_root": self.root, "merge_cmd": {"psw": FAKE_MERGE}}, f)
+        dv.main([self.log, "--kind", "psw", "--config", cfg])
+        self.assertTrue(os.path.exists(os.path.join(self.root, "alice", "proj1", "psw", "20261110120000.raw")))
+
     def test_unsafe_value(self):
         bad = os.path.join(self.work, "YKSP.ob;s.alice.proj1.20261110120000")
         os.rename(self.log, bad)
