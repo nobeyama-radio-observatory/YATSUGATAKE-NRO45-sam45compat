@@ -70,6 +70,12 @@ class TestIntegrationQl(unittest.TestCase):
         self.assertEqual(snap[0]["rest_ghz"], 43.122)                 # A05
         self.assertIsNone(self.iq.snapshot()[0]["rest_ghz"])          # L1 を渡していない
 
+    def test_live(self):
+        self.assertEqual(ql.live_ta(self.iq, 4, np.ones(4096), 4), {})      # OFF が無い
+        self.iq.add("OFF", "x.1", [_res(4, np.full(4096, 100.0), 300.0)])
+        d = ql.live_ta(self.iq, 4, np.full(4096, 110.0), 4)
+        self.assertEqual((d["live"], d["live_unit"], d["live_tsys"]), ([30.0] * 4, "K", 300.0))
+
     def test_reduce(self):
         self.assertEqual(ql.reduce(np.arange(8.0), 4), [0.5, 2.5, 4.5, 6.5])
         self.assertEqual(ql.reduce([1.234567, float("nan")], 0), [1.2346, None])
@@ -99,6 +105,8 @@ class TestQlWriter(unittest.TestCase):
                 self.assertIn("vsrc_kms", j["vel"])
                 self.assertNotIn("rest_ghz", j["vel"])
                 self.assertIn("rest_ghz", rt["windows"][0])
+                self.assertNotIn("live", rt["windows"][0])                 # OFF がまだ（随時の Ta* は OFF の後）
+                self.assertEqual(j["integration"]["scans"], {"ZERO": 1, "R": 1, "SKY": 1})
                 # 終わり: 生のスペクトルは消え、Ta* は残る（模擬は ON と OFF が同じなので 0）
                 _write(sam, recs)
                 lc.step(0.0)

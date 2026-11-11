@@ -61,13 +61,14 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
   <span id="info"></span>
   <div class="ctl">
     <label>横軸 <select id="xaxis"><option value="sky">天空周波数 [GHz]</option><option value="vlsr">Vlsr [km/s]</option><option value="if">IF [MHz]</option><option value="ch">ch</option></select></label>
+    <label>Ta* <select id="tamode"><option value="live">随時（1 秒ごと）</option><option value="integ">積分ごと</option></select></label>
     <label>生 <select id="ymode"><option value="db">dB</option><option value="lin">線形</option></select></label>
     <button id="pause" aria-pressed="false">一時停止</button>
     <a href="../status/">状態のページ</a>
   </div>
 </header>
 <main id="grid"></main>
-<footer>上: 直近の生のスペクトル（10.24 ms のダンプの平均。観測中だけ）。下: 積分ごとの Ta* = Tsys × (ON − OFF) / OFF（直近の ON と、その前の OFF。Tsys が決まる前は比のまま）。
+<footer>上: 直近の生のスペクトル（10.24 ms のダンプの平均。観測中だけ）。下: Ta* = Tsys × (ON − OFF) / OFF（Tsys が決まる前は比のまま）。「随時」は観測中に 1 秒ごと、生のスペクトルを ON とみなして直近の OFF と比べる（OTF の ON の途中から見える。ON の間だけ意味があり、R・OFF の間の値は無意味）。「積分ごと」は直近の ON の積分と、その前の OFF。
 グラフの上にマウスを置くと値を出す。
 Vlsr = V<sub>src</sub> + c·(1 − f / f<sub>rest</sub>)（電波の定義。V<sub>src</sub> は L1 の dstrv。ロギングの周波数はドップラー追尾した系）。f<sub>rest</sub> の既定は L1 の dcent_freq（丸めてあることがあるので、線の静止周波数を窓ごとに入れられる）。</footer>
 <script>
@@ -230,7 +231,7 @@ function render() {
   const age = now - last.t;
   const stale = !paused && age > STALE_S;
   document.body.classList.toggle("stale", stale);
-  const xsel = $("xaxis").value, ym = $("ymode").value;
+  const xsel = $("xaxis").value, ym = $("ymode").value, tm = $("tamode").value;
   const xm = xsel === "vlsr" && !last.vel ? "sky" : xsel;     // 速度の情報が無い（模擬など）ときは天空周波数
   document.body.classList.toggle("vlsr", xm === "vlsr");
   const it = last.integration;
@@ -243,7 +244,8 @@ function render() {
   const velText = xm === "vlsr" ? `（${vel.object || "-"}・Vsrc ${vel.vsrc_kms.toFixed(2)} km/s` +
     (vel.vdef !== 1 || vel.vref !== 1 ? `・ivdef ${vel.vdef}・ivref ${vel.vref}: 電波の定義・LSR でないかもしれない` : "") + "）"
     : xsel === "vlsr" ? "（速度の情報が無いので天空周波数）" : "";
-  $("info").textContent = `更新 ${hms(last.t)}（${age.toFixed(1)} 秒前）・横軸 ${XLABEL[xm]}${velText}` + (fetchErr ? ` ・ 読み込み失敗: ${fetchErr}` : "");
+  $("info").textContent = `更新 ${hms(last.t)}（${age.toFixed(1)} 秒前）・横軸 ${XLABEL[xm]}${velText}` +
+    (it && it.scans ? ` ・ スキャン ${Object.entries(it.scans).map(([k, v]) => `${k} ${v}`).join("・")}` : "") + (fetchErr ? ` ・ 読み込み失敗: ${fetchErr}` : "");
 
   // 窓の並び: 生のスペクトルがあればそれ、無ければ積分ごとのもの
   const wins = (rt && rt.windows) || (it && it.windows) || [];
@@ -276,16 +278,22 @@ function render() {
       c.r.textContent = "生";
       draw(c.raw, { empty: rt ? "ダンプがまだ無い" : "観測していない（ボードのデータを溜めていない）" });
     }
-    // Ta*
+    // Ta*（随時: 観測中で OFF があれば）
     const a = byArr[w.array];
-    if (a && a.spec) {
+    if (tm === "live" && r && r.live) {
+      const k = r.live_unit === "K";
+      c.a.textContent = `随時 ${k ? "Ta* [K]" : "(生−OFF)/OFF"} ・ 直近 ${rt.avg_s} 秒 − OFF ${hms(r.live_t_off)}` +
+        (r.live_tsys ? ` ・ Tsys ${r.live_tsys.toFixed(1)} K` : " ・ Tsys まだ無し") +
+        ` ・ ロギングの最後のスキャン ${it && it.last_scan || "-"}（ON の間だけ意味がある）`;
+      draw(c.ta, { x0, x1, ys: r.live, color: css("--ta"), ylabel: k ? "Ta* [K]" : "比", zero: true, hover: c.ta._p && c.ta._p.hover });
+    } else if (a && a.spec) {
       const unit = a.unit === "K" ? "Ta* [K]" : "(ON−OFF)/OFF";
       c.a.textContent = `${unit} ・ ON ${a.scan_id}（${hms(a.t)}）、OFF ${hms(a.t_off)}` + (a.tsys ? ` ・ Tsys ${a.tsys.toFixed(1)} K` : " ・ Tsys まだ無し") +
         (it.current ? "" : ` ・ 直前の観測 ${it.log_id}`);
       draw(c.ta, { x0, x1, ys: a.spec, color: css("--ta"), ylabel: a.unit === "K" ? "Ta* [K]" : "比", zero: true, hover: c.ta._p && c.ta._p.hover });
     } else {
       c.a.textContent = "Ta*";
-      draw(c.ta, { empty: it ? "ON がまだ無い（OFF → ON の後に出る）" : "観測していない" });
+      draw(c.ta, { empty: tm === "live" && rt ? "OFF がまだ無い（OFF の積分の後に出る）" : it ? "ON がまだ無い（OFF → ON の後に出る）" : "観測していない" });
     }
   }
   if (grid.children.length !== keep.length || keep.some((s, i) => grid.children[i] !== s)) grid.replaceChildren(...keep);
@@ -304,8 +312,8 @@ async function load() {
   render();
 }
 $("pause").addEventListener("click", (e) => { paused = !paused; e.target.setAttribute("aria-pressed", paused); e.target.textContent = paused ? "再開" : "一時停止"; render(); });
-for (const id of ["xaxis", "ymode"]) $(id).addEventListener("change", () => { try { localStorage.setItem("ql." + id, $(id).value); } catch (e) {} render(); });
-for (const id of ["xaxis", "ymode"]) { try { const v = localStorage.getItem("ql." + id); if (v) $(id).value = v; } catch (e) {} }
+for (const id of ["xaxis", "ymode", "tamode"]) $(id).addEventListener("change", () => { try { localStorage.setItem("ql." + id, $(id).value); } catch (e) {} render(); });
+for (const id of ["xaxis", "ymode", "tamode"]) { try { const v = localStorage.getItem("ql." + id); if (v) $(id).value = v; } catch (e) {} }
 window.addEventListener("resize", render);
 load();
 setInterval(load, 1000);

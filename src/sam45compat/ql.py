@@ -5,6 +5,9 @@
   観測していない間はボードのデータを溜めていないので出さない
 - 積分ごと: L2 を作るたびに（lc.Session）、窓ごとに直近の OFF を覚え、ON が来たら Ta* = Tsys × (ON − OFF) / OFF を作る。
   Tsys（SKY の後に決まる。yksp.YkspBuilder）がまだ無ければ (ON − OFF) / OFF のまま出す。観測が終わっても最後の値を残す
+- 随時の Ta*（2026-11-11）: 生のスペクトル（直近 ql_avg_s 秒）と、積分ごとの直近の OFF から、Tsys × (生 − OFF) / OFF を
+  ql_s ごとに出す。OTF のように ON が長く続くスキャンの途中から見るため。スキャンの種類を待たない（SAM45 のロギングは
+  積分が終わってから届く）ので、ON の間だけ意味がある（R・OFF の間の値は無意味）。生は L2 と同じ倍率（cfg.scale）にそろえる
 - どちらも L2 の ch の順（ch 1..4096）で、ql_nbin 点に平均して減らす。横軸は天空周波数（ch 1 と ch 4096 の値を添える）
 - 速度の横軸のため、L1 の dstrv（天体の速度 [m/s]）と Array ごとの dcent_freq（静止周波数の既定）を添える（vel_info）。
   45m のロギングの周波数はドップラー追尾した系（dstrv で動く天体の線が静止周波数に来る）なので、
@@ -78,13 +81,16 @@ class IntegrationQl:
         self.off: Dict[int, np.ndarray] = {}          # 窓 → 直近の OFF（L2 の順）
         self.t_off: Dict[int, float] = {}
         self.ta: Dict[int, Dict[str, object]] = {}    # 窓 → 直近の ON の Ta*（表示用に減らしたもの）
+        self.tsys: Dict[int, float] = {}               # 窓 → 直近の L2 の Tsys（随時の Ta* 用）
         self.n_on = 0
         self.last_scan: Optional[str] = None
+        self.scans: Dict[str, int] = {}                # スキャンの種類 → 積分の数（OTF の種類の名前を確かめるため）
         self.t_last: Optional[float] = None
 
     def add(self, scan: str, scan_id: str, results, t: Optional[float] = None) -> None:
         t = time.time() if t is None else t
         self.last_scan, self.t_last = scan, t
+        self.scans[scan] = self.scans.get(scan, 0) + 1
         if scan not in (SCAN_ON, SCAN_OFF):
             return
         on = False
@@ -92,6 +98,9 @@ class IntegrationQl:
             if r.array not in self.plan.windows or not r.valid or r.spec is None:
                 continue
             spec = np.asarray(r.spec, dtype=np.float64)
+            ts = float(r.record.s.dtsys)
+            if math.isfinite(ts) and ts > 0:
+                self.tsys[r.array] = ts
             if scan == SCAN_OFF:
                 self.off[r.array] = spec
                 self.t_off[r.array] = t
@@ -120,6 +129,18 @@ class IntegrationQl:
         return out
 
 
+def live_ta(iq: Optional[IntegrationQl], idx: int, spec: np.ndarray, nbin: int) -> Dict[str, object]:
+    """随時の Ta*: Tsys × (spec − 直近の OFF) / 直近の OFF（spec は L2 の順・L2 の倍率）。OFF が無ければ空。"""
+    if iq is None or idx not in iq.off:
+        return {}
+    off = iq.off[idx]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = (np.asarray(spec, dtype=np.float64) - off) / off
+    tsys = iq.tsys.get(idx, 0.0)
+    return {"live": reduce(ratio * tsys if tsys > 0 else ratio, nbin), "live_unit": "K" if tsys > 0 else "ratio",
+            "live_tsys": tsys if tsys > 0 else None, "live_t_off": iq.t_off[idx]}
+
+
 def realtime(session, avg_s: float, nbin: int) -> Optional[Dict[str, object]]:
     """今の観測の、直近 avg_s 秒の生のスペクトル（窓ごと）。束ねる用意ができていなければ None。"""
     b = session.builder
@@ -130,7 +151,8 @@ def realtime(session, avg_s: float, nbin: int) -> Optional[Dict[str, object]]:
     if last is None:
         return None
     st = last - int(avg_s * 1e9)
-    vel = session.ql.vel if getattr(session, "ql", None) is not None else None
+    iq = getattr(session, "ql", None)
+    vel = iq.vel if iq is not None else None
     wins = []
     for i, w in sorted(b.plan.windows.items(), key=lambda x: (x[1].slot.adc, x[1].slot.stream)):
         d = axis(w, vel)
@@ -138,8 +160,10 @@ def realtime(session, avg_s: float, nbin: int) -> Optional[Dict[str, object]]:
         if bn.spec is None:
             d.update({"spec": None, "n": 0})
         else:
-            d.update({"spec": reduce(w.l2_order(bn.spec), nbin), "n": bn.n, "n_expected": bn.n_expected,
+            sp = w.l2_order(bn.spec)
+            d.update({"spec": reduce(sp, nbin), "n": bn.n, "n_expected": bn.n_expected,
                       "flags": bn.flags})
+            d.update(live_ta(iq, i, sp * getattr(b, "scale", 1.0), nbin))
         wins.append(d)
     return {"t_end": last / 1e9, "avg_s": avg_s, "windows": wins}
 
@@ -190,7 +214,7 @@ class QlWriter:
         d["vel"] = None if vel is None else {k: v for k, v in vel.items() if k != "rest_ghz"}
         if iq is not None:
             d["integration"] = {"log_id": iq.log_id, "current": cur is not None and iq is cur.ql,
-                                "n_on": iq.n_on, "last_scan": iq.last_scan, "t_last": iq.t_last,
+                                "n_on": iq.n_on, "last_scan": iq.last_scan, "t_last": iq.t_last, "scans": dict(iq.scans),
                                 "windows": iq.snapshot()}
         else:
             d["integration"] = None
