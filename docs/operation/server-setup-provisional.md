@@ -180,6 +180,24 @@ journalctl -u sam45compat-lc -f        # ログ（「置き場所を読めた」
 - **観測の途中で起こし直すと、その観測は扱わない**（YKSP のロギングは途中で切れたまま残る）。
   `git pull` で更新したら、観測の合間に `sudo systemctl restart sam45compat-lc`
 
+**サービスのファイルを直したとき**（`tools/systemd/sam45compat-lc.service` が `git pull` で変わったとき）:
+`/etc/systemd/system/` の写しは `git pull` では変わらないので、写し直して読み直させる。観測の合間に行う:
+
+```sh
+cd /home/yk/YATSUGATAKE-NRO45-sam45compat
+git pull
+diff /etc/systemd/system/sam45compat-lc.service tools/systemd/sam45compat-lc.service
+# ↑ 直したい行のほかに違いが無いこと。ExecStart（--fake を外したなど）を手で変えていたら、写した後で同じように直す
+sudo cp tools/systemd/sam45compat-lc.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart sam45compat-lc
+systemctl status sam45compat-lc        # active (running)
+journalctl -u sam45compat-lc -b -n 20 --no-pager
+```
+
+- `daemon-reload` を忘れると、systemd は古い中身のまま起こす（`systemctl status` に「changed on disk」の警告が出る）
+- 中身を確かめる: `systemctl cat sam45compat-lc`
+
 ### 5.2 観測生データ（YKSP）の配信（Apache）
 
 方式は [`../design/data-delivery.md`](../design/data-delivery.md)。所内 LAN から HTTPS で、LDAP のアカウントでログインし、自分の `<group>` の下だけを見せる。
@@ -294,12 +312,18 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
 暫定 LC と RFSoC の状態を、所内 LAN から認証なしで見せる（[`../design/status-page.md`](../design/status-page.md)）。
 暫定 LC が `/var/www/html/status/status.json` を 1 秒ごとに書き、Apache が `http://<サーバー>/status/` で配る。
 
-1. 置き場所を作り、ページを置く（ページを直したら、写し直す）:
+1. 置き場所を作る（1 回だけ）。ページ（`index.html`）は、暫定 LC のサービスが起こすたびにリポジトリの
+   `tools/status/index.html` を写す（サービスの `ExecStartPre`）。`git pull` の後に起こし直せば新しくなる。
+   サービスのファイルが古ければ、5.1 の「サービスのファイルを直したとき」で写し直す:
 
    ```sh
    sudo install -d -o yk -g yk -m 755 /var/www/html/status
-   sudo install -o yk -g yk -m 644 tools/status/index.html /var/www/html/status/index.html
+   sudo systemctl restart sam45compat-lc
+   ls -l /var/www/html/status/            # index.html と status.json（yk のもの）
    ```
+
+   `/var/www/html/status/` の中にシンボリックリンクは置かない（Apache は `-FollowSymLinks` でたどらず、
+   www-data は `/home/yk` の中を読めない）
 
 2. 暫定 LC の設定に `status_path`（`/var/www/html/status/status.json`）を入れ、起こし直す（`config/bklog.json`・`config/bklog-dummy.json` には入っている）。
    `ls -l --time-style=+%T /var/www/html/status/` で `status.json` の時刻が毎秒進むことを確かめる
@@ -353,3 +377,4 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
 | 2026-11-10 | 公開の URL を `/download`（`/srv/download`）にし、頭を開くと自分のフォルダへ転送するようにした（5.2）。OS が 26.04.1 だったので記録を直した |
 | 2026-11-11 | マージの計算機に `/srv/download` を NFS で公開し、yk のマージ専用の ssh の鍵を登録した（5.3）。`authorized_keys` に `from=`・`restrict` を入れた。マウントして書き込めること、ssh で入れることを確かめた |
 | 2026-11-11 | 状態のページの手順（5.4）を書いた（まだ仮機に入れていない） |
+| 2026-11-11 | 暫定 LC のサービスが起こすたびに状態のページの `index.html` を写すようにした。サービスのファイルを直したときの手順（5.1）を足した |
