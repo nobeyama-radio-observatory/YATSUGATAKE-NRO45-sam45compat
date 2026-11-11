@@ -68,7 +68,7 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
   </div>
 </header>
 <main id="grid"></main>
-<footer>上: 直近の生のスペクトル（10.24 ms のダンプの平均。観測中だけ）。下: Ta* = Tsys × (ON − OFF) / OFF（Tsys が決まる前は比のまま）。「随時」は観測中に 1 秒ごと、生のスペクトルを ON とみなして直近の OFF と比べる（OTF の ON の途中から見える。ON の間だけ意味があり、R・OFF の間の値は無意味）。「積分ごと」は直近の ON の積分と、その前の OFF。
+<footer>上: 直近の生のスペクトル（10.24 ms のダンプの平均。観測が終わった後は、その観測の最後の値）。下: Ta* = Tsys × (ON − OFF) / OFF（Tsys が決まる前は比のまま）。「随時」は観測中に 1 秒ごと、生のスペクトルを ON とみなして直近の OFF と比べる（OTF の ON の途中から見える。ON の間だけ意味があり、R・OFF の間の値は無意味）。「積分ごと」は直近の ON の積分と、その前の OFF（観測が終わった後は、どちらを選んでもこれ）。
 グラフの上にマウスを置くと値を出す。
 Vlsr = V<sub>src</sub> + c·(1 − f / f<sub>rest</sub>)（電波の定義。V<sub>src</sub> は L1 の dstrv。ロギングの周波数はドップラー追尾した系）。f<sub>rest</sub> の既定は L1 の dcent_freq（丸めてあることがあるので、線の静止周波数を窓ごとに入れられる）。</footer>
 <script>
@@ -236,6 +236,9 @@ function render() {
   document.body.classList.toggle("vlsr", xm === "vlsr");
   const it = last.integration;
   const rt = last.realtime;
+  const ended = !rt && last.last_realtime ? last.last_realtime : null;   // 終わった観測の最後の生のスペクトル
+  const rs = rt || ended;
+  const endTag = ended ? `終わった観測 ${ended.log_id} の最後 ・ ` : "";
   if (stale) { banner.className = "bad"; banner.textContent = `暫定 LC が止まった（${Math.round(age)} 秒更新なし）`; }
   else if (paused) { banner.className = "warn"; banner.textContent = "一時停止中"; }
   else if (rt) { banner.className = "ok"; banner.textContent = `観測中 ${last.log_id}（${last.bit || "-"}）`; }
@@ -248,7 +251,7 @@ function render() {
     (it && it.scans ? ` ・ スキャン ${Object.entries(it.scans).map(([k, v]) => `${k} ${v}`).join("・")}` : "") + (fetchErr ? ` ・ 読み込み失敗: ${fetchErr}` : "");
 
   // 窓の並び: 生のスペクトルがあればそれ、無ければ積分ごとのもの
-  const wins = (rt && rt.windows) || (it && it.windows) || [];
+  const wins = (rs && rs.windows) || (it && it.windows) || [];
   const byArr = {};
   for (const w of (it && it.windows) || []) byArr[w.array] = w;
   const grid = $("grid");
@@ -267,11 +270,11 @@ function render() {
     if (document.activeElement !== c.f0) c.f0.value = restGHz(w) ?? "";
     const [x0, x1] = xRange(w, xm);
     // 生
-    const r = rt && rt.windows.find((x) => x.array === w.array);
+    const r = rs && rs.windows.find((x) => x.array === w.array);
     if (r && r.spec) {
       const ys = ym === "db" ? r.spec.map((v) => (v != null && v > 0 ? 10 * Math.log10(v) : null)) : r.spec;
       c.r.innerHTML = "";
-      c.r.append(`生 ・ ${hms(rt.t_end)} までの ${rt.avg_s} 秒（${r.n}/${r.n_expected} ダンプ）`);
+      c.r.append(`${endTag}生 ・ ${hms(rs.t_end)} までの ${rs.avg_s} 秒（${r.n}/${r.n_expected} ダンプ）`);
       if (r.flags) c.r.append(` ・ FLAGS 0x${r.flags.toString(16)}`);
       draw(c.raw, { x0, x1, ys, color: css("--raw"), ylabel: ym === "db" ? "dB" : "生", hover: c.raw._p && c.raw._p.hover });
     } else {
@@ -280,9 +283,10 @@ function render() {
     }
     // Ta*（随時: 観測中で OFF があれば）
     const a = byArr[w.array];
-    if (tm === "live" && r && r.live) {
+    // 観測が終わった後は、最後の 1 秒が ON とは限らないので、Ta* は積分ごとの最後の ON を出す
+    if (tm === "live" && r && r.live && !ended) {
       const k = r.live_unit === "K";
-      c.a.textContent = `随時 ${k ? "Ta* [K]" : "(生−OFF)/OFF"} ・ 直近 ${rt.avg_s} 秒 − OFF ${hms(r.live_t_off)}` +
+      c.a.textContent = `${endTag}随時 ${k ? "Ta* [K]" : "(生−OFF)/OFF"} ・ ${hms(rs.t_end)} までの ${rs.avg_s} 秒 − OFF ${hms(r.live_t_off)}` +
         (r.live_tsys ? ` ・ Tsys ${r.live_tsys.toFixed(1)} K` : " ・ Tsys まだ無し") +
         ` ・ ロギングの最後のスキャン ${it && it.last_scan || "-"}（ON の間だけ意味がある）`;
       draw(c.ta, { x0, x1, ys: r.live, color: css("--ta"), ylabel: k ? "Ta* [K]" : "比", zero: true, hover: c.ta._p && c.ta._p.hover });

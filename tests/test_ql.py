@@ -115,6 +115,8 @@ class TestQlWriter(unittest.TestCase):
                 with open(path) as f:
                     j = json.load(f)
                 self.assertIsNone(j["realtime"])
+                lr = j["last_realtime"]                               # 終わった観測の最後の生のスペクトル
+                self.assertEqual((lr["log_id"], len(lr["windows"][0]["spec"])), ("20260101000000", 1024))
                 it = j["integration"]
                 self.assertEqual((it["log_id"], it["current"], it["n_on"]), ("20260101000000", False, 1))
                 w0 = it["windows"][0]

@@ -6,7 +6,7 @@
 - 積分ごと: L2 を作るたびに（lc.Session）、窓ごとに直近の OFF を覚え、ON が来たら Ta* = Tsys × (ON − OFF) / OFF を作る。
   Tsys（SKY の後に決まる。yksp.YkspBuilder）がまだ無ければ (ON − OFF) / OFF のまま出す。観測が終わっても最後の値を残す
 - 随時の Ta*（2026-11-11）: 生のスペクトル（直近 ql_avg_s 秒）と、積分ごとの直近の OFF から、Tsys × (生 − OFF) / OFF を
-  ql_s ごとに出す。OTF のように ON が長く続くスキャンの途中から見るため。スキャンの種類を待たない（SAM45 のロギングは
+  ql_s ごとに出す（観測が終わった後は、最後に出したものを last_realtime として残す）。OTF のように ON が長く続くスキャンの途中から見るため。スキャンの種類を待たない（SAM45 のロギングは
   積分が終わってから届く）ので、ON の間だけ意味がある（R・OFF の間の値は無意味）。生は L2 と同じ倍率（cfg.scale）にそろえる
 - どちらも L2 の ch の順（ch 1..4096）で、ql_nbin 点に平均して減らす。横軸は天空周波数（ch 1 と ch 4096 の値を添える）
 - 速度の横軸のため、L1 の dstrv（天体の速度 [m/s]）と Array ごとの dcent_freq（静止周波数の既定）を添える（vel_info）。
@@ -179,6 +179,7 @@ class QlWriter:
         self.nbin = nbin
         self._stop = threading.Event()
         self._err_logged = False
+        self._last_rt: Optional[Dict[str, object]] = None   # 最後に出した生のスペクトル（観測が終わった後も出す）
 
     def start(self) -> None:
         d = os.path.dirname(os.path.abspath(self.path))
@@ -209,6 +210,10 @@ class QlWriter:
                 d["realtime_error"] = repr(e)
         else:
             d["realtime"] = None
+        if d["realtime"] is not None:
+            self._last_rt = dict(d["realtime"], log_id=cur.name.log_id)
+        # 観測が終わった後（と次の観測の最初のダンプまで）は、最後に出した生のスペクトル・随時の Ta* を出す（2026-11-11）
+        d["last_realtime"] = self._last_rt if d["realtime"] is None else None
         iq = cur.ql if cur is not None and cur.ql is not None else self.lc.ql_last
         vel = iq.vel if iq is not None else None
         d["vel"] = None if vel is None else {k: v for k, v in vel.items() if k != "rest_ghz"}
