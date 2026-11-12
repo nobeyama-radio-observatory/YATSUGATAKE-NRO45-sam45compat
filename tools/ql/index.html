@@ -35,8 +35,12 @@ header a { color: inherit; }
 .ctl label { display: flex; gap: 4px; align-items: center; }
 select, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
 button[aria-pressed="true"] { background: var(--warn-bg); color: var(--warn); }
-main { padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
-  max-width: 1600px; margin: 0 auto; }
+main { padding: 12px 16px 16px; display: grid; gap: 12px; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); }
+/* 表示する Array の選択（ブラウザに覚える） */
+.arrays { display: flex; gap: 6px 12px; align-items: center; flex-wrap: wrap; padding: 10px 16px 0; color: var(--mute); font-size: 13px; }
+.arrays label { display: flex; gap: 4px; align-items: center; color: var(--fg); font-variant-numeric: tabular-nums; cursor: pointer; }
+.arrays .grp { display: flex; gap: 10px; flex-wrap: wrap; }
+.arrays button { font-size: 12px; padding: 1px 8px; }
 section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
 h2 { font-size: 14px; margin: 0 0 2px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 h2 small { color: var(--mute); font-weight: 400; }
@@ -62,11 +66,13 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
   <div class="ctl">
     <label>横軸 <select id="xaxis"><option value="sky">天空周波数 [GHz]</option><option value="vlsr">Vlsr [km/s]</option><option value="if">IF [MHz]</option><option value="ch">ch</option></select></label>
     <label>Ta* <select id="tamode"><option value="integ">積分ごと（ON のときだけ更新）</option><option value="live">随時（1 秒ごと。ON とは限らない）</option></select></label>
+    <label>列 <select id="cols"><option value="auto">自動（最大 4）</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
     <label>生 <select id="ymode"><option value="db">dB</option><option value="lin">線形</option></select></label>
     <button id="pause" aria-pressed="false">一時停止</button>
     <a href="../status/">状態のページ</a>
   </div>
 </header>
+<div id="arrays" class="arrays"></div>
 <main id="grid"></main>
 <footer>上: 直近の生のスペクトル（10.24 ms のダンプの平均。観測が終わった後は、その観測の最後の値）。下: Ta* = Tsys × (ON − OFF) / OFF（Tsys が決まる前は比のまま）。「随時」は観測中に 1 秒ごと、生のスペクトルを ON とみなして直近の OFF と比べる（OTF の ON の途中から見える。ON の間だけ意味があり、R・OFF の間の値は無意味）。「積分ごと」は直近の ON の積分と、その前の OFF（観測が終わった後は、どちらを選んでもこれ）。
 グラフの上にマウスを置くと値を出す。
@@ -250,20 +256,31 @@ function render() {
   $("info").textContent = `更新 ${hms(last.t)}（${age.toFixed(1)} 秒前）・横軸 ${XLABEL[xm]}${velText}` +
     (it && it.scans ? ` ・ スキャン ${Object.entries(it.scans).map(([k, v]) => `${k} ${v}`).join("・")}` : "") + (fetchErr ? ` ・ 読み込み失敗: ${fetchErr}` : "");
 
-  // 窓の並び: 生のスペクトルがあればそれ、無ければ積分ごとのもの
-  const wins = (rs && rs.windows) || (it && it.windows) || [];
+  // 窓の並び: 生のスペクトルがあればそれ、無ければ積分ごとのもの。Array の番号の順（4 列で A05〜A08 と A21〜A24 が 1 段ずつ）
+  const wins = ((rs && rs.windows) || (it && it.windows) || []).slice().sort((a, b) => arrNo(a.array) - arrNo(b.array));
   const byArr = {};
   for (const w of (it && it.windows) || []) byArr[w.array] = w;
   const grid = $("grid");
+  arrayBar(wins.map((w) => w.array));
   if (!wins.length) {
     grid.replaceChildren(Object.assign(document.createElement("p"), { className: "sub", textContent: "LC を起こしてから、まだ観測が無い（観測が始まると窓ごとのグラフが出る）" }));
     for (const k in cards) delete cards[k];
     return;
   }
-  const keep = [];
-  for (const w of wins) {
+  const shown = wins.filter((w) => !hidden.has(w.array));
+  if (!shown.length) {
+    grid.replaceChildren(Object.assign(document.createElement("p"), { className: "sub", textContent: "表示する Array が選ばれていない（上のチェックで選ぶ）" }));
+    return;
+  }
+  // 列: 選んだ数、自動なら幅に合わせて最大 4。表示する数より多くはしない（詰めて広く出す）
+  const cs = $("cols").value;
+  const fit = Math.max(1, Math.floor((grid.clientWidth || window.innerWidth) / 380));
+  grid.style.setProperty("--cols", Math.min(cs === "auto" ? Math.min(4, fit) : Number(cs), shown.length));
+  // 先に並べてから描く（描く大きさは並べた後の幅で決まる）
+  const keep = shown.map((w) => card(w.array).sec);
+  if (grid.children.length !== keep.length || keep.some((s, i) => grid.children[i] !== s)) grid.replaceChildren(...keep);
+  for (const w of shown) {
     const c = card(w.array);
-    keep.push(c.sec);
     c.t.textContent = `${w.array}`;
     c.s.textContent = `ADC_${w.adc} 窓 ${w.stream} ・ ${Math.min(w.sky0_ghz, w.sky1_ghz).toFixed(4)}〜${Math.max(w.sky0_ghz, w.sky1_ghz).toFixed(4)} GHz`;
     c.def0 = w.rest_ghz ?? null;
@@ -300,7 +317,34 @@ function render() {
       draw(c.ta, { empty: tm === "live" && rt ? "OFF がまだ無い（OFF の積分の後に出る）" : it ? "ON がまだ無い（OFF → ON の後に出る）" : "観測していない" });
     }
   }
-  if (grid.children.length !== keep.length || keep.some((s, i) => grid.children[i] !== s)) grid.replaceChildren(...keep);
+}
+
+// ---- 表示する Array（チェックを外したものを隠し、残りを詰める。隠したものをブラウザに覚える） ----
+const arrNo = (a) => parseInt(String(a).replace(/\D/g, ""), 10) || 0;
+const hidden = new Set((() => { try { return JSON.parse(localStorage.getItem("ql.hidden") || "[]"); } catch (e) { return []; } })());
+function saveHidden() { try { localStorage.setItem("ql.hidden", JSON.stringify([...hidden])); } catch (e) {} }
+let barKey = null;
+function arrayBar(names) {
+  const bar = $("arrays");
+  const key = names.join(",");
+  if (key !== barKey) {                 // 窓の組が変わったときだけ作り直す
+    barKey = key;
+    if (!names.length) { bar.replaceChildren(); return; }
+    const grp = document.createElement("span");
+    grp.className = "grp";
+    for (const n of names) {
+      const lb = document.createElement("label");
+      const cb = Object.assign(document.createElement("input"), { type: "checkbox" });
+      cb.dataset.arr = n;
+      cb.addEventListener("change", () => { if (cb.checked) hidden.delete(n); else hidden.add(n); saveHidden(); render(); });
+      lb.append(cb, n);
+      grp.append(lb);
+    }
+    const all = Object.assign(document.createElement("button"), { textContent: "全部" });
+    all.addEventListener("click", () => { for (const n of names) hidden.delete(n); saveHidden(); render(); });
+    bar.replaceChildren("表示する Array", grp, all);
+  }
+  for (const cb of bar.querySelectorAll("input[data-arr]")) cb.checked = !hidden.has(cb.dataset.arr);
 }
 
 async function load() {
@@ -316,8 +360,8 @@ async function load() {
   render();
 }
 $("pause").addEventListener("click", (e) => { paused = !paused; e.target.setAttribute("aria-pressed", paused); e.target.textContent = paused ? "再開" : "一時停止"; render(); });
-for (const id of ["xaxis", "ymode", "tamode"]) $(id).addEventListener("change", () => { try { localStorage.setItem("ql." + id, $(id).value); } catch (e) {} render(); });
-for (const id of ["xaxis", "ymode", "tamode"]) { try { const v = localStorage.getItem("ql." + id); if (v) $(id).value = v; } catch (e) {} }
+for (const id of ["xaxis", "ymode", "tamode", "cols"]) $(id).addEventListener("change", () => { try { localStorage.setItem("ql." + id, $(id).value); } catch (e) {} render(); });
+for (const id of ["xaxis", "ymode", "tamode", "cols"]) { try { const v = localStorage.getItem("ql." + id); if (v) $(id).value = v; } catch (e) {} }
 window.addEventListener("resize", render);
 load();
 setInterval(load, 1000);
