@@ -11,7 +11,7 @@
 | specd の状態の取り方 | **暫定 LC の中で、命令と同じロックの下で `STATUS` を取る**（`board.status_nowait`）。LC が制御の口を使っている間（LOAD など）は飛ばし、前の値に古さを添えて出す | specd の制御の口は**同時に 1 接続だけ**。ほかのプログラムが毎秒つなぐと、LC の準備（LOAD・SET・START）が `ERR BUSY` で失敗しうる |
 | 止まったことの見つけ方 | JSON に書いた時刻が **5 秒より古ければ**、ページが「暫定 LC が止まった」と出す | LC が落ちたとき、計算機ごと止まったときも、同じ仕組みで見つかる。「何も出ていない」を「正常」と見誤らない |
 | 置き場所 | **`/var/www/html/status/`**（`index.html` と、LC が書く `status.json`）。URL は `http://<サーバー>/status/` | Apache の既定の置き場所の下にまとめる（2026-11-11） |
-| 公開の範囲 | **所内 LAN から、認証なし、HTTP**。所内 LAN 側の NIC の 80 番に、配信（`/download`）とは別の VirtualHost を作る（[`tools/apache/yksp-status.conf`](../../tools/apache/yksp-status.conf)） | 制御室などから誰でもすぐ見られるように。表示だけで、操作の口は無い |
+| 公開の範囲 | **所内 LAN から、認証なし**。既定の 443 番（`default-ssl.conf`。配信の `/download` と同じ口）で配り、Apache では範囲を絞らない（ファイアウォールに任せる。2026-11-12）。設定は [`tools/apache/yksp-status.conf`](../../tools/apache/yksp-status.conf)（`conf-available` に置く）。初めは所内 LAN 側の 80 番に別の VirtualHost を作るつもりだったが、仮機では使われず 443 番で見ていたので合わせた | 制御室などから誰でもすぐ見られるように。表示だけで、操作の口は無い |
 | 間隔 | JSON を書き直すのも、`STATUS` を問い合わせるのも **1 秒**（設定の `status_s`・`status_board_s`） | 取得に響くなら `status_board_s` だけを延ばす（下の「確かめること」） |
 
 ## 出しているもの

@@ -312,7 +312,7 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
 ### 5.4 状態のページ（Apache。2026-11-11）
 
 暫定 LC と RFSoC の状態を、所内 LAN から認証なしで見せる（[`../design/status-page.md`](../design/status-page.md)）。
-暫定 LC が `/var/www/html/status/status.json` を 1 秒ごとに書き、Apache が `http://<サーバー>/status/` で配る。
+暫定 LC が `/var/www/html/status/status.json` を 1 秒ごとに書き、Apache が `https://<サーバー>/status/`（既定の 443 番）で配る。
 
 1. 置き場所を作る（1 回だけ）。ページ（`index.html`）は、暫定 LC のサービスが起こすたびにリポジトリの
    `tools/status/index.html` を写す（サービスの `ExecStartPre`）。`git pull` の後に起こし直せば新しくなる。
@@ -331,29 +331,38 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
 
 2. 暫定 LC の設定に `status_path`（`/var/www/html/status/status.json`）を入れ、起こし直す（`config/bklog.json`・`config/bklog-dummy.json` には入っている）。
    `ls -l --time-style=+%T /var/www/html/status/` で `status.json` の時刻が毎秒進むことを確かめる
-3. 待ち受けを足す。`/etc/apache2/ports.conf` に `Listen <所内 LAN 側の IP>:80` を足す
-   （今の `Listen 127.0.0.1:80` は残す）。ファイアウォール: （記入: 80 番を所内 LAN にだけ開けたか）
-4. [`tools/apache/yksp-status.conf`](../../tools/apache/yksp-status.conf) を `/etc/apache2/sites-available/yksp-status.conf` に写し、`<...>` を埋めて有効にする:
+3. [`tools/apache/yksp-status.conf`](../../tools/apache/yksp-status.conf) を `/etc/apache2/conf-available/yksp-status.conf` に写して有効にする。
+   見る人は既定の `default-ssl.conf`（443 番）で開くので、別の VirtualHost は作らない（2026-11-12 に今の形に合わせた。
+   初めは所内 LAN 側の 80 番に別の VirtualHost を作る手順だったが、仮機では使われなかった）。見せる範囲は Apache では絞らない（ファイアウォールに任せる）:
 
    ```sh
-   sudo a2enmod headers deflate      # deflate: ql.json を圧縮して送る（2026-11-12）
-   sudo a2ensite yksp-status
+   sudo cp tools/apache/yksp-status.conf /etc/apache2/conf-available/
+   sudo a2enmod headers deflate      # deflate: ql.json を圧縮して送る
+   sudo a2enconf yksp-status
+   ```
+
+4. 毎秒の読み込みを `access.log` に書かないため、`/etc/apache2/sites-available/default-ssl.conf` の `CustomLog` の行の末尾に `env=!nolog` を足す:
+
+   ```apache
+   CustomLog ${APACHE_LOG_DIR}/access.log combined env=!nolog
+   ```
+
+   ```sh
    sudo apache2ctl configtest && sudo systemctl reload apache2
    ```
 
-5. 所内 LAN のほかの計算機から確かめる:
+5. 所内 LAN のほかの計算機から確かめる（仮機の証明書は自己署名なので `-k`）:
 
    ```sh
-   H=http://<サーバー>
-   curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' $H/       # 302 → $H/status/
-   curl -s -o /dev/null -w '%{http_code}\n' $H/status/                 # 200（index.html）
-   curl -s -o /dev/null -w '%{http_code}\n' $H/ql/                     # 200（QL）
-   curl -s -D - -o /dev/null $H/status/status.json | grep -i cache-control    # no-store
-   curl -s -o /dev/null -w '%{http_code}\n' $H/status/status.json.tmp  # 403 か 404
-   curl -s -o /dev/null -w '%{http_code}\n' $H/index.html              # 403（/var/www/html のほかのものは出さない）
-   curl -s -o /dev/null -w '%{http_code}\n' $H/download/               # 403 か 404（こちらの口からは配信を出さない）
+   H=https://<サーバー>
+   curl -sk -o /dev/null -w '%{http_code}\n' $H/status/                 # 200（index.html）
+   curl -sk -o /dev/null -w '%{http_code}\n' $H/ql/                     # 200（QL）
+   curl -sk -D - -o /dev/null $H/status/status.json | grep -i cache-control              # no-store
+   curl -sk -D - -o /dev/null -H 'Accept-Encoding: gzip' $H/ql/ql.json | grep -i -e cache-control -e content-encoding   # no-store・gzip
+   curl -sk -o /dev/null -w '%{http_code}\n' $H/status/status.json.tmp  # 403 か 404
    ```
 
+   仮機で `sudo tail -f /var/log/apache2/access.log` を見て、`status.json`・`ql.json` の行が増えないことを確かめる。
    ブラウザで開き、`sudo systemctl stop sam45compat-lc` で 5 秒後に「暫定 LC が止まった」になり、`start` で戻ることを見る。
 
 ### 5.5 RFSoC のボードの状態（温度・電源・CPU・メモリ。2026-11-11）
