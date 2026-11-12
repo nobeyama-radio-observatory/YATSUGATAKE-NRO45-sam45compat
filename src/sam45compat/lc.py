@@ -230,6 +230,7 @@ class Session:
     def _start(self, ctl: sl.Record, obs: sl.Record) -> None:
         cfg = self.cfg
         self.n_used = sum(obs.s.iary_usefg)
+        self.grouper.set_obs(obs.s)            # OTF の積分の幅（diptim）。OTF の ON は時刻が中心だけ（2026-11-12）
         filled: Dict[int, int] = {}
         if cfg.mirror:
             filled = mirror_sources(obs, cfg.mirror)

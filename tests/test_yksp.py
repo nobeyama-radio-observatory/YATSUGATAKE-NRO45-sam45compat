@@ -217,6 +217,42 @@ class TestBuilder(unittest.TestCase):
         self.assertEqual(done[1].ed_ns - done[1].st_ns, 5 * 10**9)
 
 
+    def test_otf_center_time(self):
+        """OTF の ON は dint_stmjd・dint_edmjd が 0 で、cint_sttm（JST の中心、ms まで）だけ（20261112202705 の形。2026-11-12）。"""
+        self.assertEqual(yk.jst_to_mjdsec("20261112202831"), 5301199711.0)   # 同じ観測の ZERO の dint_stmjd
+        self.assertAlmostEqual(yk.jst_to_mjdsec("20261112202949.0500"), 5301199789.05, places=6)
+        self.assertIsNone(yk.jst_to_mjdsec(""))
+        self.obs.s.diptim = 0.1
+        sam = _sam45_records(self.obs, range(8), scans=("ZERO", "R", "SKY", "OFF"))[:-1]
+        for k in range(3):
+            for a in range(8):
+                d = sl.new_record("L2")
+                sl.set_cstr(d.s, "cary_name", sl.array_logname(a))
+                sl.set_cstr(d.s, "cscan_type", "ON")
+                sl.set_cstr(d.s, "cscanid", "x.00005")
+                sl.set_cstr(d.s, "cint_sttm", f"20261112202949.{5 + 10 * k:02d}00")
+                d.s.iinteg_time = 20
+                sam.append(d)
+        sam.append(sl.new_record("ED"))
+        dumps = FakeDumps()
+        b = yk.YkspBuilder(self.plan, mp.IFATT_FOLLOW, dumps)
+        out, res = yk.build_offline(sam, b)
+        on = [r for r in res if sl.cstr(r.record.s.cscan_type) == "ON"]
+        self.assertEqual(len(on), 3 * 4)                                  # 積分ごとに分かれる（3 積分 × A05〜A08）
+        self.assertTrue(all(r.valid for r in on))
+        c0 = sl.mjdsec_to_unix_ns(5301199789.05)
+        spans = sorted({(st, ed) for _, st, ed in dumps.asked if st >= c0 - 10**9})
+        want = [(c0 - 50_000_000 + k * 100_000_000, c0 + 50_000_000 + k * 100_000_000) for k in range(3)]
+        self.assertEqual(len(spans), 3)
+        for got, w in zip(spans, want):                                  # MJD の秒（double）の丸めで 1 µs ほどずれる
+            self.assertLess(max(abs(got[0] - w[0]), abs(got[1] - w[1])), 2_000)
+        # diptim が 0 なら幅を作れないので無効（ダンプを探さない）
+        self.obs.s.diptim = 0.0
+        out, res = yk.build_offline(sam, yk.YkspBuilder(self.plan, mp.IFATT_FOLLOW, FakeDumps()))
+        on = [r for r in res if sl.cstr(r.record.s.cscan_type) == "ON"]
+        self.assertTrue(all(not r.valid and "幅が 0" in r.reason for r in on))
+
+
 @unittest.skipUnless(SAMPLE, "SAM45_SAMPLE が無い")
 class TestSampleBuild(unittest.TestCase):
     def test_build_from_sample(self):

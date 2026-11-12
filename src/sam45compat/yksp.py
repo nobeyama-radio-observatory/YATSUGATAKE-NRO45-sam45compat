@@ -17,6 +17,7 @@ docs/design/standin-study.md の「YKSP のロギング」:
 from __future__ import annotations
 
 import ctypes
+import datetime as _dt
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -55,9 +56,31 @@ def set_spectrum(d: sl.LogDat, spec) -> None:
     ctypes.memmove(ctypes.addressof(d) + sl.LogDat.fary_data.offset, arr.tobytes(), arr.nbytes)
 
 
+_JST = _dt.timezone(_dt.timedelta(hours=9))
+
+
+def jst_to_mjdsec(text: str) -> Optional[float]:
+    """cint_sttm（JST の YYYYMMDDHHMMSS、OTF は .ffff まで）→ MJD の起点からの秒。読めなければ None。"""
+    head, _, frac = text.strip().partition(".")
+    try:
+        t = _dt.datetime.strptime(head, "%Y%m%d%H%M%S").replace(tzinfo=_JST)
+        return sl.datetime_to_mjdsec(t) + (float("0." + frac) if frac else 0.0)
+    except ValueError:
+        return None
+
+
 def integration_key(d) -> Tuple[str, float, float, str]:
-    """SAM45 の L2 から、同じ積分を表す鍵（スキャン ID・開始・終了・スキャンの種類）。"""
-    return (sl.cstr(d.cscanid), float(d.dint_stmjd), float(d.dint_edmjd), sl.cstr(d.cscan_type))
+    """SAM45 の L2 から、同じ積分を表す鍵（スキャン ID・開始・終了・スキャンの種類。時刻は MJD の起点からの秒）。
+
+    OTF の ON は dint_stmjd・dint_edmjd が 0 で、時刻は cint_sttm（JST、積分の中心、ms まで）にしか無い
+    （2026-11-12 に 20261112202705 で確かめた。cint_edtm は空）。そのときは開始・終了とも中心の時刻にする
+    （幅 0。区間の幅は Integration.width_s で足す）。"""
+    st, ed = float(d.dint_stmjd), float(d.dint_edmjd)
+    if st == 0.0 and ed == 0.0:
+        c = jst_to_mjdsec(sl.cstr(d.cint_sttm))
+        if c is not None:
+            st = ed = c
+    return (sl.cstr(d.cscanid), st, ed, sl.cstr(d.cscan_type))
 
 
 @dataclass
@@ -65,14 +88,20 @@ class Integration:
     """SAM45 の 1 積分（同じ鍵の L2 の組）。"""
     key: Tuple[str, float, float, str]
     records: List[sl.Record] = field(default_factory=list)
+    width_s: float = 0.0        # 鍵が中心の時刻だけ（OTF。開始 = 終了）のときの区間の幅（L1 の diptim）
+
+    @property
+    def centered(self) -> bool:
+        return self.key[1] == self.key[2]
 
     @property
     def st_ns(self) -> int:
-        return sl.mjdsec_to_unix_ns(self.key[1])
+        """区間の始め。OTF は中心 − diptim / 2（2026-11-12）。"""
+        return sl.mjdsec_to_unix_ns(self.key[1] - (self.width_s / 2 if self.centered else 0.0))
 
     @property
     def ed_ns(self) -> int:
-        return sl.mjdsec_to_unix_ns(self.key[2])
+        return sl.mjdsec_to_unix_ns(self.key[2] + (self.width_s / 2 if self.centered else 0.0))
 
     @property
     def scan_type(self) -> str:
@@ -80,22 +109,28 @@ class Integration:
 
 
 class IntegrationGrouper:
-    """SAM45 の L2 を積分ごとにまとめる。鍵が変わった時点で、前の積分を閉じて返す。"""
+    """SAM45 の L2 を積分ごとにまとめる。鍵が変わった時点で、前の積分を閉じて返す。
+    width_s: 中心の時刻だけの積分（OTF）の区間の幅。L1 の diptim を入れる（set_obs）。"""
 
-    def __init__(self):
+    def __init__(self, width_s: float = 0.0):
         self.cur: Optional[Integration] = None
+        self.width_s = width_s
+
+    def set_obs(self, obs) -> None:
+        """L1 から OTF の積分の幅（diptim [s]）を読む。"""
+        self.width_s = float(obs.diptim)
 
     def feed(self, rec: sl.Record) -> List[Integration]:
         if rec.kind != "L2":
             return []
         k = integration_key(rec.s)
         if self.cur is None:
-            self.cur = Integration(k, [rec])
+            self.cur = Integration(k, [rec], self.width_s)
             return []
         if k == self.cur.key:
             self.cur.records.append(rec)
             return []
-        done, self.cur = self.cur, Integration(k, [rec])
+        done, self.cur = self.cur, Integration(k, [rec], self.width_s)
         return [done]
 
     def flush(self) -> List[Integration]:
@@ -190,6 +225,8 @@ class YkspBuilder:
         w = self.plan.windows[idx]
         if integ.scan_type == SCAN_ZERO:
             return True, "", np.full(w.nch_out, ZERO_VALUE)
+        if integ.st_ns >= integ.ed_ns:
+            return False, "積分の時刻が無い（区間の幅が 0）", None
         b = self.dumps.interval(w.slot.key, integ.st_ns, integ.ed_ns)
         if b.spec is None:
             return False, "ダンプが無い", None
@@ -226,6 +263,7 @@ def build_offline(sam_records: Iterable[sl.Record], builder: YkspBuilder,
             ctl = rec
         elif rec.kind == "L1":
             obs = rec
+            grouper.set_obs(obs.s)
             out.extend(builder.header(ctl, obs, only_targets))
         elif rec.kind == "L2":
             emit(grouper.feed(rec))

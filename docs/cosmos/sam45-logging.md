@@ -86,7 +86,7 @@ SAM45 に固有の欄（サブアレイ × SpW）: `in_spec_window`（窓の数�
 | `cscan_type` | ZERO・R・SKY・ON・OFF など | |
 | `cscanid` | スキャン ID | `260910183522.00002` |
 | `cint_sttm`・`cint_edtm` | 積分の開始・終了（JST、`YYYYMMDDHHMMSS`。**PSW は 1 s の分解能**、OTF の `cint_sttm` は積分の中心で ms まで） | 18:43:30・18:43:35 |
-| `dint_stmjd`・`dint_edmjd` | 積分の開始・終了。**名前は MJD だが中身は MJD の起点からの秒** | 5295750210（= 2026-09-10 09:43:30 UTC） |
+| `dint_stmjd`・`dint_edmjd` | 積分の開始・終了。**名前は MJD だが中身は MJD の起点からの秒**。**OTF の ON は 0**（時刻は `cint_sttm` の中心だけ。`cint_edtm` は空。下の「OTF で見た並びと値」） | 5295750210（= 2026-09-10 09:43:30 UTC） |
 | `iinteg_time` | 積分時間 [s]（整数） | ZERO 1、ほか 5 |
 | `dtsys` | Tsys [K]。SAM45 LC が計算する。QL・マージが参考値として表示する（聞き取り） | SKY 以降で 359.2 など |
 | `idmy_flag` | データの無効の印（0 有効・1 無効） | 0 |
@@ -94,6 +94,15 @@ SAM45 に固有の欄（サブアレイ × SpW）: `in_spec_window`（窓の数�
 | `fary_data[4096]` | スペクトル（float32） | |
 
 `L2` には SAM45 では使っていない GPU の欄（`dcenter_frequency` 2〜4 GHz、`istart_channel`・`inumber_channels`、窓関数など）がある（サンプルでは全部 0）。
+
+## OTF で見た並びと値（20261112202705。2026-11-12）
+
+- L1: `diptim` 0.1（OTF の積分の間隔 [s]）・`iotf_mode` 1・`isw_mod` 1
+- ZERO・R・SKY・OFF は PSW と同じ形（`dint_stmjd`・`dint_edmjd` が秒の境界、`cint_sttm`・`cint_edtm` が秒まで。R・SKY・OFF は 9 s）
+- ON（スキャン 1 つ = 1 列）: 積分ごとに L2 が並び、`cscanid` はスキャンの中で同じ。**`dint_stmjd`・`dint_edmjd` は 0**、
+  `cint_sttm` が JST の積分の中心で 1/10000 s まで（`20261112202949.0500`、`.1500`、… と `diptim` おき）、`cint_edtm` は空、`iinteg_time` は 20（列の長さ）
+- 暫定 LC は、ON の積分の区間を `cint_sttm` ± `diptim` / 2 にする（`yksp.integration_key`・`Integration.width_s`）。
+  v0.1.5 まではこれを読めず、OTF の ON がすべて無効（`idmy_flag` 1、「ダンプが無い」）になっていた
 
 ## サンプルで見た並びと値
 
