@@ -80,6 +80,8 @@ class TestBoardFake(unittest.TestCase):
         cmds = self.spec.commands
         self.assertNotIn("LOAD bit=default", cmds)          # 今の bit と同じなら載せ替えない
         self.assertIn("ID", cmds)                            # 版の記録のため、観測ごとに ID を読む
+        self.assertIn("ANCHOR", cmds)                        # 錨は time_ok を見ずに観測ごとに打ち直す
+        self.assertLess(cmds.index("ANCHOR"), cmds.index("START"))
         self.assertEqual(self.spec.ident["bit"], "default")
         self.assertIn("version", self.spec.ident)
         self.assertTrue(any(c.startswith("SET ") and "A0.if=3000" in c and "A1.bw=128" in c for c in cmds))

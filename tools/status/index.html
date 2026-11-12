@@ -121,6 +121,18 @@ function grid(head, rows) {
 const list = (s) => (s == null || s === "" ? [] : String(s).split(","));
 const zero = (v) => v == null || v === "-" || v === "" || Number(v) === 0;
 
+// 時刻の照合が照らす「錨からの PPS の数とスタンプの差」（specd の STATUS の pps_drift・pps_n・pps_tol。YATSUGATAKE 13b5ae5 から）。
+// 1 ビート = 125/32 ns。許容の半分を越えたら注意、越えたら specd は時刻を答えない（time_ok=0）。古い specd では鍵が無く出さない
+const BEAT_NS = 125 / 32;
+function ppsRow(st) {
+  if (!("pps_drift" in st)) return [null, null];
+  if (st.pps_drift === "-" || st.pps_drift == null) return [["PPS のずれ", "錨が無い"], null];
+  const d = Number(st.pps_drift), tol = Number(st.pps_tol), n = Number(st.pps_n);
+  const lv = Math.abs(d) > tol ? "bad" : Math.abs(d) > tol / 2 ? "warn" : null;
+  const rate = n > 0 ? ` ・ ${(d * BEAT_NS / (n / 3600)).toFixed(2)} ns/時` : "";
+  return [["PPS のずれ", `${d > 0 ? "+" : ""}${d} ビート（${(d * BEAT_NS).toFixed(1)} ns）／許容 ±${tol}（${(tol * BEAT_NS).toFixed(0)} ns）・ 錨から ${dur(n)}${rate}`, lv], lv];
+}
+
 const PHASE = { "記録中": "ok", "準備中": "warn", "L1 待ち": "idle", "終わり": "ok",
   "準備に失敗": "bad", "失敗": "bad", "手を引いた": "warn" };
 const phaseTag = (p) => tag(PHASE[p] || "idle", p || "-");
@@ -276,6 +288,9 @@ function renderBoard(b, now) {
   const adc = el("div", { class: "adc" }, ["A", "B", "C", "D"].map((a, i) => el("div", {},
     el("span", {}, "ADC_" + a), el("b", {}, dbm[i] && dbm[i] !== "-" ? dbm[i] + " dBm" : (dbfs[i] && dbfs[i] !== "-" ? dbfs[i] + " dBFS" : "-")),
     el("span", {}, dbm[i] && dbm[i] !== "-" && dbfs[i] ? dbfs[i] + " dBFS" : ""))));
+  const [pps, ppsLv] = ppsRow(st);
+  if (ppsLv === "bad") level = "bad";
+  else if (ppsLv === "warn" && level === "ok") level = "warn";
   const rec = b.recorder || {};
   const [ref, refLv] = refRow(rec, now);
   if (refLv === "bad") level = "bad";
@@ -284,6 +299,7 @@ function renderBoard(b, now) {
     ["状態", tag(stCls, state)],
     ref,
     ["時刻（1PPS）", timeOk ? tag("ok", "OK") : tag(st.forced === "1" ? "warn" : "bad", "答えられない" + (st.time_err ? `（${st.time_err}）` : ""))],
+    pps,
     ["ダンプ", st.dumps],
     ["0 でない数", nonzero.length ? el("span", {}, nonzero.map((k) => tag("warn", `${k}=${st[k]}`)), "") : tag("ok", "なし")],
     ["health・flags", `${st.health} ・ ${st.flags}`, health ? "warn" : null],

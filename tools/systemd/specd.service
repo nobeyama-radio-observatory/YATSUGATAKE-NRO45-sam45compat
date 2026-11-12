@@ -6,6 +6,8 @@
 # ログ: journalctl -u specd -f
 # yk-c からは ssh rfsoc sudo systemctl restart specd（tools/systemd/specd.sudoers）
 # 10 MHz・1PPS をつないだら、specd.py に --clkin 0 --ref 10 を足す（今は 1PPS なしの試験。ボードの水晶）
+# --pps-tol-ns 1000: 時刻の照合の累計の許容を ±2 ビート（7.8 ns）から 1 µs に広げる。45m では PPS と 10 MHz の位相が
+#   ゆっくり漂い、錨から 34893 発で −3 ビートずれて RUN の途中で時刻を失った（2026-11-12）。specd は YATSUGATAKE d33ee4f 以降
 [Unit]
 Description=YATSUGATAKE specd (SAM45 stand-in)
 After=network-online.target
@@ -18,7 +20,7 @@ WorkingDirectory=/home/xilinx/sam45-fine-<版>
 # kill -9 などで残った共有メモリ（次に起こすときに邪魔をする）
 ExecStartPre=-/bin/sh -c 'rm -f /dev/shm/psm_*'
 # 手で起こすとき（sudo -E $(which python3)）と同じ環境（pynq の venv・XRT）を読んでから起こす
-ExecStart=/bin/bash -c 'for f in /etc/profile.d/boardname.sh /etc/profile.d/pynq_venv.sh /etc/profile.d/xrt_setup.sh; do [ -f "$f" ] && . "$f"; done; exec python3 specd.py --bits bits.json'
+ExecStart=/bin/bash -c 'for f in /etc/profile.d/boardname.sh /etc/profile.d/pynq_venv.sh /etc/profile.d/xrt_setup.sh; do [ -f "$f" ] && . "$f"; done; exec python3 specd.py --bits bits.json --pps-tol-ns 1000'
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30

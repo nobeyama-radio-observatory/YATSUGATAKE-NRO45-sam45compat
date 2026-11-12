@@ -87,7 +87,7 @@ YATSUGATAKE が書く Array は、将来ほかにも足すかもしれません�
 
 | YATSUGATAKE | 備考 |
 |---|---|
-| **v1.4.0** | `external/YATSUGATAKE` の git submodule で固定（2026-11-06）。clone の後に `git submodule update --init` |
+| **v1.4.0 + 時刻の照合の 2 コミット**（`13b5ae5`、枝 `specd/pps-drift`） | `external/YATSUGATAKE` の git submodule で固定（2026-11-06）。clone の後に `git submodule update --init`。2026-11-13 に v1.4.0 の上に specd の `--pps-tol-ns`（時刻の照合の累計の許容、PR #111）と STATUS の `pps_drift`・`pps_n`・`pps_tol`（PPS のずれ）の 2 コミットだけを足したものに上げた。v1.5.0（SpW8）は入れていない |
 
 このリポジトリの運用の版は `vX.Y.Z` のタグで付け、動いている版は LC が観測ごとに記録する（試験運用は v0.1.0 から。
 [`docs/operation/versioning.md`](docs/operation/versioning.md)）。

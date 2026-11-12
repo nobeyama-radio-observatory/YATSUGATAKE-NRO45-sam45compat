@@ -28,7 +28,7 @@
 - **RFSoC のボード**（設定の `board.hk_port` があれば）: 温度（PS の LPD・FPD、PL）、電流（INA220。VCCINT ほか）、CPU ごとの使用率、負荷、メモリ・`/dev/shm`・SD カードの使用率、
   AMS の電圧。ボードの上の常駐（`tools/boardhk.py`）から HTTP で読む。閾値は仮（温度 65 ℃ で注意・75 ℃ で異常、VCCINT 35 A で注意・40 A で異常。
   Wide でボードが落ちたときは VCCINT 41.8 A・70.8 ℃ で上昇中だった）。取得の CPU（CPU3）は使い切るのが普通なので、色で知らせない
-- **RFSoC**: specd の `STATUS`（状態、時刻（1PPS）、ADC ごとの TP、0 であるべき数（`miss`・`kgap`・`drop`・`pl_drop` など）、`health`・`flags`、読み出しの 1 周、溜まり、データの口）と、LC の受け側がつながっているか。
+- **RFSoC**: specd の `STATUS`（状態、時刻（1PPS）、PPS のずれ（`pps_drift`・`pps_n`・`pps_tol`。許容の半分で注意・越えたら異常。2026-11-13）、ADC ごとの TP、0 であるべき数（`miss`・`kgap`・`drop`・`pl_drop` など）、`health`・`flags`、読み出しの 1 周、溜まり、データの口）と、LC の受け側がつながっているか。
   鍵の意味は YATSUGATAKE の `docs/user/specd.md` の「STATUS の見方」
 - **周波数の基準（10 MHz）**（2026-11-11）: LC が受けた記録の `health` の [1]（1PPS の間隔が 256,000,000 ± 1 ビートを外れた。コアの
   `hw/common/time_core.v`）を見る（`recorder.RefWatch`）。10 MHz が来ていない・specd が `--clkin 0` でないと fs が ppm 単位でずれ、

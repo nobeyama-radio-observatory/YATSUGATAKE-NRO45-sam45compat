@@ -114,13 +114,18 @@ class BoardSpectrometer:
                 self._ok(c, f"LOAD bit={want}")
             self.ident = self._read_ident(c, want)
             self._ok(c, "SET " + " ".join(plan.set_args(self.tint_s)))
-            # 時刻を答えられない（PPS の照合が一度でも外れると錨を打ち直すまで戻らない）と START が断られる。
-            # RUN の間は錨を打ち直せないので、観測の始まり（IDLE のここ）で打ち直す
+            # 錨は観測ごとに打ち直す（2026-11-13）。specd は錨からの PPS の数とスタンプの差を ±2 ビート（7.8 ns）で
+            # 照らし、一度外れると錨を打ち直すまで時刻を答えない（RUN の間は打ち直せない）。PPS と 10 MHz の位相の
+            # ゆっくりした漂いでも、錨から何時間も経つと外れる（2026-11-12、錨から 34893 発で −3 ビート）。
+            # 観測ごとに打てば、溜まるのは 1 観測の長さの分だけになる。
+            # また IDLE の間は specd がこの照合をしないので、STATUS の time_ok が 1 でも START の中で初めて外れて
+            # 断られることがある。time_ok を見ずに打つのはそのため。ANCHOR は秒の真ん中を待つので最大 ≒ 1 秒かかる
             st = self._ok(c, "STATUS")
             if self.cfg.no_pps:
                 log.warning("%s: 1PPS なしの試験（board.no_pps）。時刻はこの計算機の時計で付ける。科学には使えない", log_id)
-            elif st.get("time_ok") not in ("1", "True", "true"):
-                log.warning("時刻を答えられない（%s）。錨を打ち直す", st.get("time_err", "-"))
+            else:
+                if st.get("time_ok") not in ("1", "True", "true"):
+                    log.warning("時刻を答えられない（%s）。錨を打ち直す", st.get("time_err", "-"))
                 self._ok(c, "ANCHOR")
             expect = {w.slot.key: (w.if_mhz, w.df_mhz) for w in plan.windows.values()}
             self.store = DiskDumps(os.path.join(self.cfg.tmp_dir, log_id), expect,
