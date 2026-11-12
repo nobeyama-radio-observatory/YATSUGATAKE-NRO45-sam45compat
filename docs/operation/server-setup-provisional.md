@@ -336,7 +336,7 @@ ssh -i ~/.ssh/id_ed25519_merge -o BatchMode=yes <user>@<マージ計算機> 'hos
 4. [`tools/apache/yksp-status.conf`](../../tools/apache/yksp-status.conf) を `/etc/apache2/sites-available/yksp-status.conf` に写し、`<...>` を埋めて有効にする:
 
    ```sh
-   sudo a2enmod headers
+   sudo a2enmod headers deflate      # deflate: ql.json を圧縮して送る（2026-11-12）
    sudo a2ensite yksp-status
    sudo apache2ctl configtest && sudo systemctl reload apache2
    ```

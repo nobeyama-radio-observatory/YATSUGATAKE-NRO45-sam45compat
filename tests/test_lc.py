@@ -249,7 +249,7 @@ class TestBklogLayout(unittest.TestCase):
             with open(cfg.ql_path) as f:
                 it = json.load(f)["integration"]
             w0 = it["windows"][0]
-            self.assertEqual((it["n_on"], len(it["windows"]), len(w0["spec"]), w0["nch"]), (1, 8, 1024, 2048))
+            self.assertEqual((it["n_on"], len(it["windows"]), len(w0["spec"]), w0["nch"]), (1, 8, 2048, 2048))   # 2048 ch は減らさずそのまま
         finally:
             lc.close()
             tmp.cleanup()

@@ -66,6 +66,7 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
   <span id="info"></span>
   <div class="ctl">
     <label>横軸 <select id="xaxis"><option value="vlsr" selected>Vlsr [km/s]</option><option value="sky">天空周波数 [GHz]</option><option value="if">IF [MHz]</option><option value="ch">ch</option></select></label>
+    <label>ビニング <select id="bin"><option value="1">1 ch</option><option value="2">2 ch</option><option value="3">3 ch</option><option value="4">4 ch</option><option value="5">5 ch</option><option value="10">10 ch</option><option value="15">15 ch</option><option value="20">20 ch</option><option value="25">25 ch</option><option value="30">30 ch</option></select></label>
     <label>列 <select id="cols"><option value="auto">自動（最大 4）</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
     <label>生 <select id="ymode"><option value="db">dB</option><option value="lin">線形</option><option value="off">表示しない</option></select></label>
     <button id="pause" aria-pressed="false">一時停止</button>
@@ -74,7 +75,7 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
 </header>
 <div id="arrays" class="arrays"></div>
 <main id="grid"></main>
-<footer>上: 直近の生のスペクトル（10.24 ms のダンプの平均。観測が終わった後は、その観測の最後の値）。下: Ta* = Tsys × (ON − OFF) / OFF（Tsys が決まる前は比のまま）。直近の ON の積分と、その前の OFF（ON の積分のたびに更新し、OFF・HOT の間は直前の ON のまま）。「生」で「表示しない」を選ぶと上の段を隠す。
+<footer>上: 直近の生のスペクトル（10.24 ms のダンプの平均。観測が終わった後は、その観測の最後の値）。下: Ta* = Tsys × (ON − OFF) / OFF（Tsys が決まる前は比のまま）。直近の ON の積分と、その前の OFF（ON の積分のたびに更新し、OFF・HOT の間は直前の ON のまま）。「生」で「表示しない」を選ぶと上の段を隠す。「ビニング」で隣り合う ch をその数ずつ平均する（全 Array 同じ。生は線形で平均してから dB にする）。
 グラフの上にマウスを置くと値を出す。
 Vlsr = V<sub>src</sub> + c·(1 − f / f<sub>rest</sub>)（電波の定義。V<sub>src</sub> は L1 の dstrv。ロギングの周波数はドップラー追尾した系）。f<sub>rest</sub> の既定は L1 の dcent_freq（丸めてあることがあるので、線の静止周波数を窓ごとに入れられる）。</footer>
 <script>
@@ -125,7 +126,7 @@ function draw(cv, p) {
   ylo -= m; yhi += m;
   const X = (x) => L + (x - xlo) / (xhi - xlo || 1) * pw;
   const Y = (y) => T + (1 - (y - ylo) / (yhi - ylo)) * ph;
-  const xv = (i) => p.x0 + (n > 1 ? i / (n - 1) : 0) * (p.x1 - p.x0);
+  const xv = (i) => p.x0 + (p.fr ? p.fr[i] : n > 1 ? i / (n - 1) : 0) * (p.x1 - p.x0);   // fr: 点の ch の位置（0〜1。ビニングの中心）
   cv._map = { X, Y, xv, xlo, xhi, n };
   // 格子と目盛り
   g.strokeStyle = grid; g.lineWidth = 1; g.fillStyle = fg;
@@ -157,7 +158,8 @@ function draw(cv, p) {
     if (pen) g.lineTo(x, y); else { g.moveTo(x, y); pen = true; }
   }
   g.stroke(); g.restore();
-  // 指している点
+  // 指している点（ビニングを替えると点の数が変わるので、範囲の外なら消す）
+  if (p.hover != null && p.hover >= n) p.hover = null;
   if (p.hover != null) {
     const i = p.hover, v = p.ys[i], x = X(xv(i));
     g.strokeStyle = css("--cross"); g.setLineDash([3, 3]);
@@ -179,7 +181,11 @@ function hoverable(cv) {
     if (px < b.L || px > b.L + b.pw) { p.hover = null; draw(cv, p); return; }
     const x = m.xlo + (px - b.L) / b.pw * (m.xhi - m.xlo);
     const f = (x - p.x0) / ((p.x1 - p.x0) || 1);
-    p.hover = Math.max(0, Math.min(m.n - 1, Math.round(f * (m.n - 1))));
+    if (p.fr) {                         // ビニングした点: いちばん近い中心
+      let k = 0;
+      for (let i = 1; i < m.n; i++) if (Math.abs(p.fr[i] - f) < Math.abs(p.fr[k] - f)) k = i;
+      p.hover = k;
+    } else p.hover = Math.max(0, Math.min(m.n - 1, Math.round(f * (m.n - 1))));
     draw(cv, p);
   };
   cv.addEventListener("pointermove", move);
@@ -227,6 +233,21 @@ function xRange(w, mode) {
   if (mode === "ch") return [1, w.nch || 4096];
   return [w.sky0_ghz, w.sky1_ghz];
 }
+// 周波数方向のビニング: 隣り合う b ch ずつ平均する（全 Array 同じ。2026-11-12）。LC は ch を減らさずに送る
+// （古い LC が点を減らして送っていれば、1 点あたりの ch で割って点の数にする）。端の余りはある分だけで平均する。
+// 返す fr は各点の中心の ch の位置（0〜1。ch 1 が 0、最後の ch が 1）
+function binned(ys, nch, b) {
+  const N = ys.length, per = Math.max(1, Math.round(nch / N)), k = Math.max(1, Math.round(b / per));
+  const out = [], fr = [];
+  for (let s = 0; s < N; s += k) {
+    const e = Math.min(N, s + k);
+    let sum = 0, c = 0;
+    for (let i = s; i < e; i++) { const v = ys[i]; if (v != null) { sum += v; c++; } }
+    out.push(c ? sum / c : null);
+    fr.push(N > 1 ? (s + e - 1) / 2 / (N - 1) : 0);
+  }
+  return { ys: out, fr };
+}
 const XLABEL = { sky: "天空周波数 [GHz]", vlsr: "Vlsr [km/s]", if: "IF [MHz]", ch: "ch" };
 
 let last = null, fetchErr = null, paused = false;
@@ -237,7 +258,7 @@ function render() {
   const age = now - last.t;
   const stale = !paused && age > STALE_S;
   document.body.classList.toggle("stale", stale);
-  const xsel = $("xaxis").value, ym = $("ymode").value;
+  const xsel = $("xaxis").value, ym = $("ymode").value, bin = Number($("bin").value) || 1;
   document.body.classList.toggle("noraw", ym === "off");     // 生の段を隠す（全 Array 一括）
   const xm = xsel === "vlsr" && !last.vel ? "sky" : xsel;     // 速度の情報が無い（模擬など）ときは天空周波数
   document.body.classList.toggle("vlsr", xm === "vlsr");
@@ -254,7 +275,7 @@ function render() {
   const velText = xm === "vlsr" ? `（${vel.object || "-"}・Vsrc ${vel.vsrc_kms.toFixed(2)} km/s` +
     (vel.vdef !== 1 || vel.vref !== 1 ? `・ivdef ${vel.vdef}・ivref ${vel.vref}: 電波の定義・LSR でないかもしれない` : "") + "）"
     : xsel === "vlsr" ? "（速度の情報が無いので天空周波数）" : "";
-  $("info").textContent = `更新 ${hms(last.t)}（${age.toFixed(1)} 秒前）・横軸 ${XLABEL[xm]}${velText}` +
+  $("info").textContent = `更新 ${hms(last.t)}（${age.toFixed(1)} 秒前）・横軸 ${XLABEL[xm]}${velText}` + (bin > 1 ? ` ・ ${bin} ch ずつ平均` : "") +
     (it && it.scans ? ` ・ スキャン ${Object.entries(it.scans).map(([k, v]) => `${k} ${v}`).join("・")}` : "") + (fetchErr ? ` ・ 読み込み失敗: ${fetchErr}` : "");
 
   // 窓の並び: 生のスペクトルがあればそれ、無ければ積分ごとのもの。Array の番号の順（4 列で A05〜A08 と A21〜A24 が 1 段ずつ）
@@ -292,11 +313,12 @@ function render() {
     if (ym === "off") {
       // 隠しているので描かない
     } else if (r && r.spec) {
-      const ys = ym === "db" ? r.spec.map((v) => (v != null && v > 0 ? 10 * Math.log10(v) : null)) : r.spec;
+      const bd = binned(r.spec, w.nch || 4096, bin);          // 線形で平均してから dB にする
+      const ys = ym === "db" ? bd.ys.map((v) => (v != null && v > 0 ? 10 * Math.log10(v) : null)) : bd.ys;
       c.r.innerHTML = "";
       c.r.append(`${endTag}生 ・ ${hms(rs.t_end)} までの ${rs.avg_s} 秒（${r.n}/${r.n_expected} ダンプ）`);
       if (r.flags) c.r.append(` ・ FLAGS 0x${r.flags.toString(16)}`);
-      draw(c.raw, { x0, x1, ys, color: css("--raw"), ylabel: ym === "db" ? "dB" : "生", hover: c.raw._p && c.raw._p.hover });
+      draw(c.raw, { x0, x1, ys, fr: bd.fr, color: css("--raw"), ylabel: ym === "db" ? "dB" : "生", hover: c.raw._p && c.raw._p.hover });
     } else {
       c.r.textContent = "生";
       draw(c.raw, { empty: rt ? "ダンプがまだ無い" : "観測していない（ボードのデータを溜めていない）" });
@@ -307,7 +329,8 @@ function render() {
       const unit = a.unit === "K" ? "Ta* [K]" : "(ON−OFF)/OFF";
       c.a.textContent = `${unit} ・ ON ${a.scan_id}（${hms(a.t)}）、OFF ${hms(a.t_off)}` + (a.tsys ? ` ・ Tsys ${a.tsys.toFixed(1)} K` : " ・ Tsys まだ無し") +
         (it.current ? "" : ` ・ 直前の観測 ${it.log_id}`);
-      draw(c.ta, { x0, x1, ys: a.spec, color: css("--ta"), ylabel: a.unit === "K" ? "Ta* [K]" : "比", zero: true, hover: c.ta._p && c.ta._p.hover });
+      const bd = binned(a.spec, w.nch || 4096, bin);
+      draw(c.ta, { x0, x1, ys: bd.ys, fr: bd.fr, color: css("--ta"), ylabel: a.unit === "K" ? "Ta* [K]" : "比", zero: true, hover: c.ta._p && c.ta._p.hover });
     } else {
       c.a.textContent = "Ta*";
       draw(c.ta, { empty: it ? "ON がまだ無い（OFF → ON の後に出る）" : "観測していない" });
@@ -356,8 +379,8 @@ async function load() {
   render();
 }
 $("pause").addEventListener("click", (e) => { paused = !paused; e.target.setAttribute("aria-pressed", paused); e.target.textContent = paused ? "再開" : "一時停止"; render(); });
-for (const id of ["xaxis", "ymode", "cols"]) $(id).addEventListener("change", () => { try { localStorage.setItem("ql." + id, $(id).value); } catch (e) {} render(); });
-for (const id of ["xaxis", "ymode", "cols"]) { try { const v = localStorage.getItem("ql." + id); if (v) $(id).value = v; } catch (e) {} }
+for (const id of ["xaxis", "ymode", "bin", "cols"]) $(id).addEventListener("change", () => { try { localStorage.setItem("ql." + id, $(id).value); } catch (e) {} render(); });
+for (const id of ["xaxis", "ymode", "bin", "cols"]) { try { const v = localStorage.getItem("ql." + id); if (v) $(id).value = v; } catch (e) {} }
 window.addEventListener("resize", render);
 load();
 setInterval(load, 1000);

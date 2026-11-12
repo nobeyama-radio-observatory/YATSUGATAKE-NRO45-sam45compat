@@ -5,10 +5,8 @@
   観測していない間はボードのデータを溜めていないので出さない
 - 積分ごと: L2 を作るたびに（lc.Session）、窓ごとに直近の OFF を覚え、ON が来たら Ta* = Tsys × (ON − OFF) / OFF を作る。
   Tsys（SKY の後に決まる。yksp.YkspBuilder）がまだ無ければ (ON − OFF) / OFF のまま出す。観測が終わっても最後の値を残す
-- 随時の Ta*（2026-11-11）: 生のスペクトル（直近 ql_avg_s 秒）と、積分ごとの直近の OFF から、Tsys × (生 − OFF) / OFF を
-  ql_s ごとに出す（観測が終わった後は、最後に出したものを last_realtime として残す）。OTF のように ON が長く続くスキャンの途中から見るため。スキャンの種類を待たない（SAM45 のロギングは
-  積分が終わってから届く）ので、ON の間だけ意味がある（R・OFF の間の値は無意味）。生は L2 と同じ倍率（cfg.scale）にそろえる
-- どちらも L2 の ch の順（ch 1..4096。SAM45 の ichannel が 2048 なら 2048）で、ql_nbin 点に平均して減らす。横軸は天空周波数（ch 1 と ch 4096 の値を添える）
+- 随時の Ta*（生を ON とみなして直近の OFF と比べる）は 2026-11-12 に外した（今のデータが ON かを積分が終わるまで知らないため）
+- どちらも L2 の ch の順（ch 1..4096。SAM45 の ichannel が 2048 なら 2048）で、ql_nbin 点に平均して減らす（既定は減らさない。ページで選んだ ch 数ずつ平均する）。横軸は天空周波数（ch 1 と ch 4096 の値を添える）
 - 速度の横軸のため、L1 の dstrv（天体の速度 [m/s]）と Array ごとの dcent_freq（静止周波数の既定）を添える（vel_info）。
   45m のロギングの周波数はドップラー追尾した系（dstrv で動く天体の線が静止周波数に来る）なので、
   V = dstrv + c·(1 − f / f_rest)（電波の定義）。サンプル（R Cas の SiO v=1、2026-09-10）で 24.95 km/s に出ることを確かめた
@@ -72,7 +70,7 @@ def axis(w: mp.YkWindow, vel: Optional[Dict[str, object]] = None) -> Dict[str, o
 class IntegrationQl:
     """1 つの観測の、積分ごとの Ta*（lc.Session が L2 を作るたびに add する）。"""
 
-    def __init__(self, log_id: str, plan: mp.Plan, nbin: int = 1024, obs=None):
+    def __init__(self, log_id: str, plan: mp.Plan, nbin: int = 4096, obs=None):
         """obs: L1（LogObs。速度の横軸のため。無ければ速度を出さない）。"""
         self.log_id = log_id
         self.plan = plan
@@ -81,7 +79,6 @@ class IntegrationQl:
         self.off: Dict[int, np.ndarray] = {}          # 窓 → 直近の OFF（L2 の順）
         self.t_off: Dict[int, float] = {}
         self.ta: Dict[int, Dict[str, object]] = {}    # 窓 → 直近の ON の Ta*（表示用に減らしたもの）
-        self.tsys: Dict[int, float] = {}               # 窓 → 直近の L2 の Tsys（随時の Ta* 用）
         self.n_on = 0
         self.last_scan: Optional[str] = None
         self.scans: Dict[str, int] = {}                # スキャンの種類 → 積分の数（OTF の種類の名前を確かめるため）
@@ -98,9 +95,6 @@ class IntegrationQl:
             if r.array not in self.plan.windows or not r.valid or r.spec is None:
                 continue
             spec = np.asarray(r.spec, dtype=np.float64)
-            ts = float(r.record.s.dtsys)
-            if math.isfinite(ts) and ts > 0:
-                self.tsys[r.array] = ts
             if scan == SCAN_OFF:
                 self.off[r.array] = spec
                 self.t_off[r.array] = t
@@ -129,18 +123,6 @@ class IntegrationQl:
         return out
 
 
-def live_ta(iq: Optional[IntegrationQl], idx: int, spec: np.ndarray, nbin: int) -> Dict[str, object]:
-    """随時の Ta*: Tsys × (spec − 直近の OFF) / 直近の OFF（spec は L2 の順・L2 の倍率）。OFF が無ければ空。"""
-    if iq is None or idx not in iq.off:
-        return {}
-    off = iq.off[idx]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ratio = (np.asarray(spec, dtype=np.float64) - off) / off
-    tsys = iq.tsys.get(idx, 0.0)
-    return {"live": reduce(ratio * tsys if tsys > 0 else ratio, nbin), "live_unit": "K" if tsys > 0 else "ratio",
-            "live_tsys": tsys if tsys > 0 else None, "live_t_off": iq.t_off[idx]}
-
-
 def realtime(session, avg_s: float, nbin: int) -> Optional[Dict[str, object]]:
     """今の観測の、直近 avg_s 秒の生のスペクトル（窓ごと）。束ねる用意ができていなければ None。"""
     b = session.builder
@@ -163,7 +145,6 @@ def realtime(session, avg_s: float, nbin: int) -> Optional[Dict[str, object]]:
             sp = w.l2_order(bn.spec)
             d.update({"spec": reduce(sp, nbin), "n": bn.n, "n_expected": bn.n_expected,
                       "flags": bn.flags})
-            d.update(live_ta(iq, i, sp * getattr(b, "scale", 1.0), nbin))
         wins.append(d)
     return {"t_end": last / 1e9, "avg_s": avg_s, "windows": wins}
 
@@ -171,7 +152,7 @@ def realtime(session, avg_s: float, nbin: int) -> Optional[Dict[str, object]]:
 class QlWriter:
     """QL の JSON を定期的に書く（別のスレッド。status.StatusWriter と同じ書き方）。"""
 
-    def __init__(self, lc: "LC", path: str, interval_s: float = 1.0, avg_s: float = 1.0, nbin: int = 1024):
+    def __init__(self, lc: "LC", path: str, interval_s: float = 1.0, avg_s: float = 1.0, nbin: int = 4096):
         self.lc = lc
         self.path = path
         self.interval_s = interval_s
@@ -212,7 +193,7 @@ class QlWriter:
             d["realtime"] = None
         if d["realtime"] is not None:
             self._last_rt = dict(d["realtime"], log_id=cur.name.log_id)
-        # 観測が終わった後（と次の観測の最初のダンプまで）は、最後に出した生のスペクトル・随時の Ta* を出す（2026-11-11）
+        # 観測が終わった後（と次の観測の最初のダンプまで）は、最後に出した生のスペクトルを出す（2026-11-11）
         d["last_realtime"] = self._last_rt if d["realtime"] is None else None
         iq = cur.ql if cur is not None and cur.ql is not None else self.lc.ql_last
         vel = iq.vel if iq is not None else None

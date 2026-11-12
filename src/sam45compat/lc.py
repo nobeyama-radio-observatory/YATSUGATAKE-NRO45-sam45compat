@@ -107,7 +107,7 @@ class LcConfig:
     ql_path: Optional[str] = None
     ql_s: float = 1.0                             # JSON を書き直す間隔
     ql_avg_s: float = 1.0                         # 生のスペクトルを平均する長さ（直近の何秒か）
-    ql_nbin: int = 1024                           # 4096 ch を何点に減らすか（4096 の約数）
+    ql_nbin: int = 4096                           # 何点に減らすか（4096 の約数。4096 なら減らさない。ページで選んだ ch 数ずつ平均する。2026-11-12）
     # 版の記録（version.py。1 観測 1 行のタブ区切り）。None なら書かない（journal には毎回出す）。
     # 45m の仮機では /home/yk/bklog/sam45compat-versions.tsv
     version_log: Optional[str] = None

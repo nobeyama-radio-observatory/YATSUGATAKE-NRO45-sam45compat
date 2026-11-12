@@ -70,12 +70,6 @@ class TestIntegrationQl(unittest.TestCase):
         self.assertEqual(snap[0]["rest_ghz"], 43.122)                 # A05
         self.assertIsNone(self.iq.snapshot()[0]["rest_ghz"])          # L1 を渡していない
 
-    def test_live(self):
-        self.assertEqual(ql.live_ta(self.iq, 4, np.ones(4096), 4), {})      # OFF が無い
-        self.iq.add("OFF", "x.1", [_res(4, np.full(4096, 100.0), 300.0)])
-        d = ql.live_ta(self.iq, 4, np.full(4096, 110.0), 4)
-        self.assertEqual((d["live"], d["live_unit"], d["live_tsys"]), ([30.0] * 4, "K", 300.0))
-
     def test_reduce(self):
         self.assertEqual(ql.reduce(np.arange(8.0), 4), [0.5, 2.5, 4.5, 6.5])
         self.assertEqual(ql.reduce([1.234567, float("nan")], 0), [1.2346, None])
@@ -99,13 +93,13 @@ class TestQlWriter(unittest.TestCase):
                 self.assertEqual(j["log_id"], "20260101000000")
                 rt = j["realtime"]
                 self.assertEqual([w["array"] for w in rt["windows"]], ["A05", "A06", "A07", "A08"])
-                self.assertEqual(len(rt["windows"][0]["spec"]), 1024)
+                self.assertEqual(len(rt["windows"][0]["spec"]), 4096)          # 減らさない（ページで平均する）
                 self.assertGreater(rt["windows"][0]["n"], 0)
                 self.assertTrue(j["integration"]["current"])
                 self.assertIn("vsrc_kms", j["vel"])
                 self.assertNotIn("rest_ghz", j["vel"])
                 self.assertIn("rest_ghz", rt["windows"][0])
-                self.assertNotIn("live", rt["windows"][0])                 # OFF がまだ（随時の Ta* は OFF の後）
+                self.assertNotIn("live", rt["windows"][0])                 # 随時の Ta* は外した
                 self.assertEqual(j["integration"]["scans"], {"ZERO": 1, "R": 1, "SKY": 1})
                 # 終わり: 生のスペクトルは消え、Ta* は残る（模擬は ON と OFF が同じなので 0）
                 _write(sam, recs)
@@ -116,7 +110,7 @@ class TestQlWriter(unittest.TestCase):
                     j = json.load(f)
                 self.assertIsNone(j["realtime"])
                 lr = j["last_realtime"]                               # 終わった観測の最後の生のスペクトル
-                self.assertEqual((lr["log_id"], len(lr["windows"][0]["spec"])), ("20260101000000", 1024))
+                self.assertEqual((lr["log_id"], len(lr["windows"][0]["spec"])), ("20260101000000", 4096))
                 it = j["integration"]
                 self.assertEqual((it["log_id"], it["current"], it["n_on"]), ("20260101000000", False, 1))
                 w0 = it["windows"][0]
