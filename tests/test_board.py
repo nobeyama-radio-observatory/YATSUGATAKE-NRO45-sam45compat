@@ -79,6 +79,9 @@ class TestBoardFake(unittest.TestCase):
         self.spec.prepare(plan, "20261106000001")
         cmds = self.spec.commands
         self.assertNotIn("LOAD bit=default", cmds)          # 今の bit と同じなら載せ替えない
+        self.assertIn("ID", cmds)                            # 版の記録のため、観測ごとに ID を読む
+        self.assertEqual(self.spec.ident["bit"], "default")
+        self.assertIn("version", self.spec.ident)
         self.assertTrue(any(c.startswith("SET ") and "A0.if=3000" in c and "A1.bw=128" in c for c in cmds))
         st = self.spec.dumps()
         self.assertTrue(self._wait(lambda: st.latest_end_ns() is not None and st.counts()["A0"] > 150))

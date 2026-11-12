@@ -40,6 +40,7 @@ from . import combine as cb
 from . import deliver as dv
 from . import mapping as mp
 from . import samlog as sl
+from . import version as ver
 from . import yksp as yk
 from .binning import DumpSource
 from .notify import Notifier
@@ -107,6 +108,9 @@ class LcConfig:
     ql_s: float = 1.0                             # JSON を書き直す間隔
     ql_avg_s: float = 1.0                         # 生のスペクトルを平均する長さ（直近の何秒か）
     ql_nbin: int = 1024                           # 4096 ch を何点に減らすか（4096 の約数）
+    # 版の記録（version.py。1 観測 1 行のタブ区切り）。None なら書かない（journal には毎回出す）。
+    # 45m の仮機では /home/yk/bklog/sam45compat-versions.tsv
+    version_log: Optional[str] = None
 
     @classmethod
     def from_json(cls, path: str) -> "LcConfig":
@@ -170,6 +174,7 @@ class Session:
         self.t_start = time.time()
         self.t_last_l2: Optional[float] = None
         self.ql = None                  # 積分ごとの Ta*（ql.IntegrationQl。ql_path があるとき）
+        self.versions: Optional[Dict[str, object]] = None   # この観測を取った版（version.observation）
 
     def info(self) -> Dict[str, object]:
         """状態のページに出す、この観測のようす（別のスレッドから読む。値はおおよそ）。"""
@@ -180,7 +185,7 @@ class Session:
                 "arrays": [sl.array_label(i) for i in sorted(plan.windows)] if plan is not None else [],
                 "skipped": {sl.array_label(i): r for i, r in plan.skipped.items()} if plan is not None else {},
                 "n_l2": self.n_written, "n_invalid": self.n_invalid, "pending": len(self.pending),
-                "t_start": self.t_start, "t_last_l2": self.t_last_l2,
+                "t_start": self.t_start, "t_last_l2": self.t_last_l2, "versions": self.versions,
                 "notime": getattr(b.dumps, "n_notime", 0) if b is not None else 0,
                 "windows": window_info(plan) if plan is not None else []}
 
@@ -258,9 +263,24 @@ class Session:
         else:
             self.phase = "記録中"         # 肩代わりの Array が無い観測（全部 idmy_flag = 1 で書く）
         self.builder.dumps = self.spec.dumps()
+        self._record_versions(plan.kind)
         if cfg.ql_path and self.builder.plan.windows:
             from .ql import IntegrationQl
             self.ql = IntegrationQl(self.name.log_id, self.builder.plan, cfg.ql_nbin, obs=obs.s)
+
+    def _record_versions(self, bit: Optional[str]) -> None:
+        """この観測を取った版を journal と版の記録に残す。失敗しても観測は止めない。"""
+        try:
+            v = ver.observation(ver.software(), getattr(self.spec, "ident", None), bit)
+            self.versions = v
+            log.info("%s: 版 %s ・ bit %s（USR_ACCESS %s、specd %s）%s", self.name.log_id, ver.short(ver.software()),
+                     v["bit"], v["bit_usr"] or "-", v["specd"] or "-", "・作業ツリーに手直しがある" if v["dirty"] else "")
+            if self.cfg.version_log:
+                t0 = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(self.t_start))
+                ver.append_log(self.cfg.version_log, t0, self.name.log_id, self.kind, v)
+        except Exception as e:
+            log.exception("%s: 版を記録できない", self.name.log_id)
+            self.notify(f"{self.name.log_id}: 版を記録できない", repr(e))
 
     def _flush_pending(self, now: float, final: bool) -> None:
         if self.builder is None:
@@ -399,6 +419,10 @@ class LC:
         self.cfg = cfg
         self.spec = spec
         self.notify = notify or Notifier()
+        self.software = ver.software()
+        log.info("版: %s（commit %s）", ver.short(self.software), self.software.get("commit") or "-")
+        if self.software.get("dirty"):
+            log.warning("作業ツリーに commit していない手直しがある（版が一意に決まらない）")
         self.sessions: Dict[str, Session] = {}
         self._unreadable = set()
         self._primed = set()            # 一度でも読めた置き場所（skip_existing の「既にある」を決めた）

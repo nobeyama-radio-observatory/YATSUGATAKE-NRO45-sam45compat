@@ -130,8 +130,17 @@ function renderLC(d, now) {
   if (lc.error) { $("lc").replaceChildren(el("p", { class: "bad" }, "LC の状態を作れない: " + lc.error)); return "bad"; }
   const loopBad = lc.loop_age_s > LOOP_WARN_S;
   const unread = (lc.dirs || []).filter((x) => !x.readable);
+  const sw = d.software || {};
+  const swWarn = sw.dirty || sw.yatsugatake_mismatch;
+  // 今の観測（無ければ直前の観測）の bit の版。LC の版は起こしたときのもの
+  const ob = (lc.sessions || []).concat(lc.recent || []).find((s) => s.versions);
+  const bv = ob && ob.versions;
   $("lc").replaceChildren(kvTable([
     ["計算機", `${d.host}（pid ${d.pid}）`],
+    ["版", el("span", {}, `sam45compat ${sw.sam45compat || "?"} ・ YATSUGATAKE ${sw.yatsugatake || "?"}`,
+      sw.dirty ? tag("warn", "手直しあり") : "", sw.yatsugatake_mismatch ? tag("warn", "固定の版と違う") : ""),
+      swWarn ? "warn" : null],
+    bv ? ["bit の版", `${bv.bit || "-"}（USR_ACCESS ${bv.bit_usr || "-"}・specd ${bv.specd || "-"}・${ob.log_id}）`] : null,
     ["動いている時間", dur(now - d.started)],
     ["本体の 1 周", lc.loop_age_s + " 秒前", loopBad ? "bad" : null],
     ["出力", lc.output],
@@ -139,7 +148,7 @@ function renderLC(d, now) {
       el("li", {}, el("code", {}, x.in), " → ", el("code", {}, x.out), ` (${x.kind || "-"}) `,
         x.readable ? null : tag("bad", "読めない"))))],
   ]));
-  return loopBad || unread.length ? "bad" : "ok";
+  return loopBad || unread.length ? "bad" : swWarn ? "warn" : "ok";
 }
 
 function renderObs(lc, now) {
@@ -181,9 +190,9 @@ function renderWindows(lc, now) {
 function renderRecent(lc) {
   const rs = lc.recent || [];
   if (!rs.length) { $("recent").replaceChildren(el("p", { class: "mute" }, "LC を起こしてから、まだ無い")); return; }
-  $("recent").replaceChildren(grid(["ログ ID", "種類", "結果", "bit", "L2", "無効", "始まり", "終わり", ""],
+  $("recent").replaceChildren(grid(["ログ ID", "種類", "結果", "bit", "L2", "無効", "始まり", "終わり", "版", ""],
     rs.map((s) => [s.log_id, s.kind, phaseTag(s.phase), s.bit, s.n_l2, s.n_invalid ? tag("warn", s.n_invalid) : 0,
-      mdhms(s.t_start), mdhms(s.t_end), s.error ? el("code", {}, s.error) : ""])));
+      mdhms(s.t_start), mdhms(s.t_end), s.versions ? s.versions.sam45compat + (s.versions.dirty ? "（手直しあり）" : "") : "-", s.error ? el("code", {}, s.error) : ""])));
 }
 
 function renderDeliver(lc) {
@@ -396,7 +405,7 @@ function render() {
     document.title = "✕ YKSP 状態";
     return;
   }
-  $("lc-tag").replaceChildren(tag(lcLevel, lcLevel === "ok" ? "動いている" : "異常"));
+  $("lc-tag").replaceChildren(tag(lcLevel, lcLevel === "ok" ? "動いている" : lcLevel === "warn" ? "注意" : "異常"));
   const all = worst(lcLevel, obsLevel, diskLevel, bdLevel, hkLevel);
   banner.className = all;
   banner.textContent = BANNER[all];

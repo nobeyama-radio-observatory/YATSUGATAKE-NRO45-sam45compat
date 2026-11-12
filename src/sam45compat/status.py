@@ -205,7 +205,8 @@ class StatusWriter:
 
     def snapshot(self) -> Dict[str, object]:
         d: Dict[str, object] = {"version": VERSION, "t": time.time(), "host": self.host, "pid": os.getpid(),
-                                "started": self.t_start, "interval_s": self.interval_s}
+                                "started": self.t_start, "interval_s": self.interval_s,
+                                "software": getattr(self.lc, "software", None)}
         try:
             d["lc"] = lc_snapshot(self.lc)
         except Exception as e:          # 表示用なので、失敗しても書き続ける

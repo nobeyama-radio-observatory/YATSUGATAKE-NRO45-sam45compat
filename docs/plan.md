@@ -96,6 +96,7 @@ sam45compat の残りの作業。方式と決めたことは [`design/standin-st
   ディスクは一時置き場（`/home/yk/bklog`。追記中のロギング・10.24 ms の一時ファイル）とストレージ（RAIDZ、別にマウント。書き終えたロギング・観測生データ）を分け、NIC は 3 本以上（ボード用・bklog 用・ダウンロード用）（2026-11-10）
 - [ ] 運用者への通知の手段（メール・Slack など）。今はログに `通知:` で出すだけ
 - [ ] **状態のページ**（`status.py`・`tools/status/index.html`・[`tools/apache/yksp-status.conf`](../tools/apache/yksp-status.conf) で済み。2026-11-11）: 暫定 LC と RFSoC の状態を、所内 LAN から認証なしで 1 秒ごとに見る（[`design/status-page.md`](design/status-page.md)）。残りは仮機に入れること（[`operation/server-setup-provisional.md`](operation/server-setup-provisional.md) の 5.4）と、毎秒の `STATUS` が取得に響かないかを実機で確かめること。ボードの温度・電源・CPU・メモリはボードの常駐（`tools/boardhk.py`）から読む（ボードに入れるのは 5.5。閾値は仮）。QL（`/ql/`、`ql.py`・`tools/ql/index.html`）: 窓ごとに直近 1 秒の生のスペクトルと積分ごとの Ta*（2026-11-11）
+- [x] **版の付け方と記録**（`version.py`、[`operation/versioning.md`](operation/versioning.md)。2026-11-12）: 運用に入れる版に `vX.Y.Z` のタグを付け、LC が起こしたときの版（sam45compat・YATSUGATAKE）と観測ごとの bit・specd の版（specd の `ID`）を journal・状態のページ・版の記録（`version_log`）に残す。試験運用は v0.1.0 から
 - [ ] 一時置き場とストレージの空き（観測生データとロギングを 1 年置く量）
 
 ## 7. YATSUGATAKE コア側

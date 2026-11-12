@@ -83,6 +83,8 @@ class BoardSpectrometer:
         self.recorder.start()
         self.store: Optional[DiskDumps] = None
         self.commands: List[str] = []      # 送った命令（試験と調べ用）
+        # 載っている bit と specd の版（ID の答え。観測ごとに読み直す。版の記録用。読めなければ {"error": …}）
+        self.ident: Optional[Dict[str, str]] = None
         self._lock = threading.Lock()      # 制御の口（1 接続まで）を使う命令を順番にする
 
     def _ctl(self, timeout: float = 60.0) -> Control:
@@ -110,6 +112,7 @@ class BoardSpectrometer:
             if cur != want:
                 log.info("bit を載せ替える: %s → %s", cur, want)
                 self._ok(c, f"LOAD bit={want}")
+            self.ident = self._read_ident(c, want)
             self._ok(c, "SET " + " ".join(plan.set_args(self.tint_s)))
             # 時刻を答えられない（PPS の照合が一度でも外れると錨を打ち直すまで戻らない）と START が断られる。
             # RUN の間は錨を打ち直せないので、観測の始まり（IDLE のここ）で打ち直す
@@ -128,6 +131,16 @@ class BoardSpectrometer:
             self._ok(c, "SEND ON")
         finally:
             c.close()
+
+    def _read_ident(self, c: Control, bit: str) -> Dict[str, str]:
+        """ID（specd の版・bit の USR_ACCESS など）。版の記録のためだけなので、失敗しても観測は止めない。"""
+        try:
+            d = dict(self._ok(c, "ID"))
+        except Exception as e:
+            log.warning("specd の ID を読めない（版の記録が欠ける）: %s", e)
+            return {"bit": bit, "error": str(e)}
+        d["bit"] = bit
+        return d
 
     def finish(self, log_id: str) -> None:
         with self._lock:

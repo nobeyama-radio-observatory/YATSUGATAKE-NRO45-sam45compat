@@ -179,6 +179,8 @@ journalctl -u sam45compat-lc -f        # ログ（「置き場所を読めた」
 - 起動した時点（マウントが後なら、置き場所を初めて読めた時点）に既にあるロギングは扱わない
 - **観測の途中で起こし直すと、その観測は扱わない**（YKSP のロギングは途中で切れたまま残る）。
   `git pull` で更新したら、観測の合間に `sudo systemctl restart sam45compat-lc`
+- **試験運用（2026-11-12 から）は、タグの版だけを入れる**（`git pull` でなく `git checkout <タグ>`）。手順と版の記録は [`versioning.md`](versioning.md)。
+  `config/bklog.local.json` に `"version_log": "/home/yk/bklog/sam45compat-versions.tsv"` を足す（`config/bklog.json` と同じ）
 
 **サービスのファイルを直したとき**（`tools/systemd/sam45compat-lc.service` が `git pull` で変わったとき）:
 `/etc/systemd/system/` の写しは `git pull` では変わらないので、写し直して読み直させる。観測の合間に行う:

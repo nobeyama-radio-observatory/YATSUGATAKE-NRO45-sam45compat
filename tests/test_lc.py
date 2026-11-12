@@ -60,6 +60,22 @@ class TestLC(unittest.TestCase):
         self.assertEqual(note.sent, [])
         self.assertEqual(lc.sessions, {})
 
+    def test_version_log(self):
+        """観測ごとに版を 1 行記録する（試験運用で、どの版で取ったかを後から引くため）。"""
+        self.cfg.version_log = os.path.join(self.dir, "versions.tsv")
+        lc = lcm.LC(self.cfg, FakeSpectrometer())
+        self.assertIn("sam45compat", lc.software)
+        self._run_growing(lc)
+        with open(self.cfg.version_log) as f:
+            rows = [x.rstrip("\n").split("\t") for x in f]
+        self.assertEqual(rows[0][:4], ["t_start", "log_id", "kind", "sam45compat"])
+        self.assertEqual(len(rows), 2)
+        r = dict(zip(rows[0], rows[1]))
+        self.assertEqual((r["log_id"], r["bit"], r["bit_usr"]), ("20260101000000", "fine", "-"))   # 模擬は ID が無い
+        self.assertEqual(r["sam45compat"], lc.software["sam45compat"])
+        v = lc.recent[0]["versions"]
+        self.assertEqual(v["yatsugatake"], lc.software["yatsugatake"])
+
     def test_closes_integration_without_waiting_next(self):
         # 1 積分ぶんの L2（8 Array）が揃った時点で YKSP の L2 を書く（次の積分を待たない）
         lc = lcm.LC(self.cfg, FakeSpectrometer())

@@ -89,6 +89,9 @@ YATSUGATAKE が書く Array は、将来ほかにも足すかもしれません�
 |---|---|
 | **v1.4.0** | `external/YATSUGATAKE` の git submodule で固定（2026-11-06）。clone の後に `git submodule update --init` |
 
+このリポジトリの運用の版は `vX.Y.Z` のタグで付け、動いている版は LC が観測ごとに記録する（試験運用は v0.1.0 から。
+[`docs/operation/versioning.md`](docs/operation/versioning.md)）。
+
 ## 試験
 
 ```bash
