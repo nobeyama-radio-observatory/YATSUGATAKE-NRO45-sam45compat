@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sam45compat"
-version = "0.1.8"
+version = "0.1.9"
 description = "SAM45 の故障した Array を YATSUGATAKE で肩代わりする暫定のソフトウェア"
 license = { text = "BSD-3-Clause" }
 requires-python = ">=3.9"

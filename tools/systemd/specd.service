@@ -7,7 +7,9 @@
 # yk-c からは ssh rfsoc sudo systemctl restart specd（tools/systemd/specd.sudoers）
 # 10 MHz・1PPS をつないだら、specd.py に --clkin 0 --ref 10 を足す（今は 1PPS なしの試験。ボードの水晶）
 # --pps-tol-ns 1000: 時刻の照合の累計の許容を ±2 ビート（7.8 ns）から 1 µs に広げる。45m では PPS と 10 MHz の位相が
-#   ゆっくり漂い、錨から 34893 発で −3 ビートずれて RUN の途中で時刻を失った（2026-11-12）。specd は YATSUGATAKE d33ee4f 以降
+#   ゆっくり漂い、錨から 34893 発で −3 ビートずれて RUN の途中で時刻を失った（2026-11-12）。この引数は、ボードの PS が
+#   sam45-fine/v1.0.0 なら 62225bd（枝 sam45-fine/v1.0.0-pps）、v1.4.0 なら d33ee4f 以降の specd.py が要る。古い specd.py は
+#   知らない引数で起きない（docs/operation/server-setup-provisional.md の 5.7）
 [Unit]
 Description=YATSUGATAKE specd (SAM45 stand-in)
 After=network-online.target

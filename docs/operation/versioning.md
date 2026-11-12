@@ -28,7 +28,7 @@ git push origin v0.1.1
 
 ```sh
 cd /home/yk/YATSUGATAKE-NRO45-sam45compat
-git fetch --tags
+git fetch --tags                     # 失敗したら次に進まない（submodule の取得の失敗でも止まる。&& でつないだときは checkout が走らない）
 git checkout v0.1.1                  # 入れる版（タグ）
 git submodule update                 # YATSUGATAKE を、この版が固定した commit にそろえる
 git status --short                   # 何も出ないこと（出れば「手直しあり」になる）

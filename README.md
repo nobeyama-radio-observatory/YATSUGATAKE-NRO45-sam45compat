@@ -87,7 +87,12 @@ YATSUGATAKE が書く Array は、将来ほかにも足すかもしれません�
 
 | YATSUGATAKE | 備考 |
 |---|---|
-| **v1.4.0 + 時刻の照合の 2 コミット**（`13b5ae5`、枝 `specd/pps-drift`） | `external/YATSUGATAKE` の git submodule で固定（2026-11-06）。clone の後に `git submodule update --init`。2026-11-13 に v1.4.0 の上に specd の `--pps-tol-ns`（時刻の照合の累計の許容、PR #111）と STATUS の `pps_drift`・`pps_n`・`pps_tol`（PPS のずれ）の 2 コミットだけを足したものに上げた。v1.5.0（SpW8）は入れていない |
+| **v1.4.0 + 時刻の照合の 2 コミット**（`13b5ae5`、枝 `specd/pps-drift`） | `external/YATSUGATAKE` の git submodule で固定（2026-11-06）。clone の後に `git submodule update --init`（URL は https。鍵は要らない）。2026-11-13 に v1.4.0 の上に specd の `--pps-tol-ns`（時刻の照合の累計の許容、PR #111）と STATUS の `pps_drift`・`pps_n`・`pps_tol`（PPS のずれ）の 2 コミットだけを足したものに上げた。v1.5.0（SpW8）は入れていない |
+
+**ボードの specd（PS）は submodule と別の版で動いている**（2026-11-13）。LC が submodule から使うのは記録の形（`s45proto`）と道具（`specctl.py`）だけで、
+ボードの `~/sam45-fine-v1.0.0/` は **sam45-fine/v1.0.0** の PS に、上の 2 コミットと同じ変更だけを移した `62225bd`（枝 `sam45-fine/v1.0.0-pps`）の
+`timebase.py`・`s45acq.py`・`specd.py` を置いたもの。v1.4.0 の 3 ファイルをそのまま置くと、v1.0.0 の `s45cal.py` と合わずに起きない（2026-11-13 に踏んだ）。
+ボードの PS を入れ替える手順は [`docs/operation/server-setup-provisional.md`](docs/operation/server-setup-provisional.md) の 5.7。
 
 このリポジトリの運用の版は `vX.Y.Z` のタグで付け、動いている版は LC が観測ごとに記録する（試験運用は v0.1.0 から。
 [`docs/operation/versioning.md`](docs/operation/versioning.md)）。

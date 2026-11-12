@@ -135,7 +135,8 @@ NTP が合わせるのは時計の秒まで（ms 程度）。積分の区間の�
 
 ## 5. sam45compat を動かす
 
-submodule の URL が `git@github.com:` なので、仮機から GitHub に SSH で入れる鍵（個人の鍵か deploy key）が要る。
+submodule の URL は https（v0.1.9 から。YATSUGATAKE は公開リポジトリなので鍵は要らない）。v0.1.8 までは `git@github.com:` で、鍵の無い仮機では取れなかった。
+v0.1.8 までに clone したものは、v0.1.9 を checkout した後に一度 `git submodule sync` で URL を https にそろえる。
 
 ```sh
 git clone --recurse-submodules https://github.com/nobeyama-radio-observatory/YATSUGATAKE-NRO45-sam45compat.git
@@ -147,7 +148,8 @@ pytest
 ```
 
 - 仮機でつまずいたこと:
-  - submodule が取れておらず、`s45proto` の import で止まった（鍵が無く SSH で取れなかった）。取り方を記入: （鍵 / HTTPS）
+  - submodule が取れておらず、`s45proto` の import で止まった（鍵が無く SSH で取れなかった）。取り方: HTTPS（2026-11-13 に `git config submodule.external/YATSUGATAKE.url` と submodule の `remote set-url` で https にした。v0.1.9 で `.gitmodules` も https）
+  - `git fetch --tags && git checkout …` とつなぐと、submodule の取得の失敗で fetch がエラーになり、checkout が走らない（2026-11-13）
   - `pytest` が `external/YATSUGATAKE` の中の `test_nch.py`（単体で実行するスクリプト。最後に `sys.exit`）まで集めて止まった。
     `pyproject.toml` に `testpaths = ["tests"]` を足して直した。直す前は `pytest tests` で回避できる
 - Python の版: 3.14.4（OS は Ubuntu 26.04.1 LTS）
@@ -462,6 +464,38 @@ specd が起きていない観測は「分光計の準備に失敗」として�
 `board.host`・`board.bits`（`specctl.py BITS` の名前）を実機に合わせる。1PPS なしの間は `board.no_pps: true`（[`stage1.md`](stage1.md) の「設定」）。
 サービスの `ExecStart` は `systemctl edit sam45compat-lc` で `--config config/bklog.local.json`（`--fake` なし）にする。
 
+### 5.7 ボードの specd（PS）を入れ替える（2026-11-13）
+
+ボードの PS は submodule と別の版で動いている（README の「使う YATSUGATAKE の版」）。**ほかの版のファイルを混ぜると起きない**
+（2026-11-13、sam45-fine/v1.0.0 のボードに v1.4.0 の `specd.py` を置いて `s45cal.tp_cal_path` が無く落ち、≒ 6 分止めた）。
+観測の合間に、次の順で行う。
+
+```bash
+# 仮機で。D はボードの置き場所（systemctl cat specd の WorkingDirectory）、V は今のボードの PS の版（例 sam45-fine/v1.0.0）
+D=/home/xilinx/sam45-fine-v1.0.0; V=sam45-fine/v1.0.0
+ssh rfsoc systemctl cat specd | grep -E "WorkingDirectory|ExecStart"
+# 1. ボードの *.py が V と一致するか（違うファイルがあれば止める。何の版かを先に調べる）
+rm -rf /tmp/pschk && mkdir -p /tmp/pschk
+git -C external/YATSUGATAKE fetch origin --tags
+git -C external/YATSUGATAKE archive $V sw/pynq | tar -x -C /tmp/pschk
+(cd /tmp/pschk/sw/pynq && sha256sum *.py) > /tmp/pschk.sum
+scp /tmp/pschk.sum rfsoc:/tmp/ && ssh rfsoc "cd $D && sha256sum -c --quiet /tmp/pschk.sum"     # 何も出ないこと
+# 2. 退避を取る（置き場所ごと。戻すときは cp -a で書き戻す）
+ssh rfsoc "cp -a $D ${D}-bak-$(date +%Y%m%d)"
+# 3. 入れるファイルを、V から枝分かれしたコミット（C）から取り出して置く
+C=62225bd; mkdir -p /tmp/psnew
+for f in timebase.py s45acq.py specd.py; do git -C external/YATSUGATAKE show $C:sw/pynq/$f > /tmp/psnew/$f; done
+scp /tmp/psnew/*.py rfsoc:$D/
+# 4. 引数を変えるなら unit を直して daemon-reload。起こし直して、口が開くまで（数十秒）見る
+ssh -t rfsoc 'sudo systemctl restart specd'
+ssh rfsoc journalctl -u specd --since -3min --no-pager | grep -E "許容|制御の口|データの口|Traceback|Error"
+python3 external/YATSUGATAKE/sw/pynq/specctl.py --host $B STATUS
+```
+
+- 入れるコミット C は、**V から枝分かれしたもの**にする（V と C の差がその変更だけであることを `git diff $V $C --stat` で見る）
+- 起きなければ、退避から書き戻して起こし直す（`ssh rfsoc "cp -a ${D}-bak-<日付>/. $D/"`）。引数を足していたら unit からも外す（古い specd は知らない引数で起きない）
+- 今のボード: V = sam45-fine/v1.0.0、C = `62225bd`（`--pps-tol-ns` と STATUS の PPS のずれ）、引数 `--clkin 0 --ref 10 --pps-tol-ns 1000`（2026-11-13）
+
 ## 6. まだやらないこと
 
 - **COSMOS のネットワークへの接続と、SAM45 のロギングのマウント**は、SAM45 の運用に影響しうるので、
@@ -488,6 +522,7 @@ specd が起きていない観測は「分光計の準備に失敗」として�
 | 2026-11-10 | 公開の URL を `/download`（`/srv/download`）にし、頭を開くと自分のフォルダへ転送するようにした（5.2）。OS が 26.04.1 だったので記録を直した |
 | 2026-11-11 | マージの計算機に `/srv/download` を NFS で公開し、yk のマージ専用の ssh の鍵を登録した（5.3）。`authorized_keys` に `from=`・`restrict` を入れた。マウントして書き込めること、ssh で入れることを確かめた |
 | 2026-11-11 | 状態のページの手順（5.4）を書いた（まだ仮機に入れていない） |
+| 2026-11-13 | v0.1.8 を入れた。submodule を https で取るようにした（5.）。ボードの PS（sam45-fine/v1.0.0）に `62225bd` の 3 ファイルを置き `--pps-tol-ns 1000` を足した。初めに v1.4.0 の 3 ファイルを置いて ≒ 6 分 specd を止めたので、入れ替えの手順（5.7）を書いた |
 | 2026-11-11 | 暫定 LC のサービスが起こすたびに状態のページの `index.html` を写すようにした。サービスのファイルを直したときの手順（5.1）を足した |
 | 2026-11-11 | RFSoC のボードの状態の常駐（5.5）の手順を書いた（まだボードに入れていない） |
 | 2026-11-11 | QL（`/ql/`）を 5.4 に足した。`/var/www/html/ql` を作り、Apache の設定に `/var/www/html/ql` を足す |
