@@ -48,6 +48,7 @@ h2 small { color: var(--mute); font-weight: 400; }
 .sub b { color: var(--fg); font-weight: 500; }
 .rest { display: none; gap: 4px; align-items: center; color: var(--mute); font-size: 12px; font-weight: 400; margin-left: auto; }
 body.vlsr .rest { display: flex; }
+body.noraw .sub.r, body.noraw canvas.raw { display: none; }
 .rest input { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; width: 9em; }
 canvas { display: block; width: 100%; height: 190px; touch-action: none; }
 .ok { color: var(--ok); background: var(--ok-bg); }
@@ -64,17 +65,16 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
   <span id="banner" class="idle">読み込み中</span>
   <span id="info"></span>
   <div class="ctl">
-    <label>横軸 <select id="xaxis"><option value="sky">天空周波数 [GHz]</option><option value="vlsr">Vlsr [km/s]</option><option value="if">IF [MHz]</option><option value="ch">ch</option></select></label>
-    <label>Ta* <select id="tamode"><option value="integ">積分ごと（ON のときだけ更新）</option><option value="live">随時（1 秒ごと。ON とは限らない）</option></select></label>
+    <label>横軸 <select id="xaxis"><option value="vlsr" selected>Vlsr [km/s]</option><option value="sky">天空周波数 [GHz]</option><option value="if">IF [MHz]</option><option value="ch">ch</option></select></label>
     <label>列 <select id="cols"><option value="auto">自動（最大 4）</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
-    <label>生 <select id="ymode"><option value="db">dB</option><option value="lin">線形</option></select></label>
+    <label>生 <select id="ymode"><option value="db">dB</option><option value="lin">線形</option><option value="off">表示しない</option></select></label>
     <button id="pause" aria-pressed="false">一時停止</button>
     <a href="../status/">状態のページ</a>
   </div>
 </header>
 <div id="arrays" class="arrays"></div>
 <main id="grid"></main>
-<footer>上: 直近の生のスペクトル（10.24 ms のダンプの平均。観測が終わった後は、その観測の最後の値）。下: Ta* = Tsys × (ON − OFF) / OFF（Tsys が決まる前は比のまま）。「随時」は観測中に 1 秒ごと、生のスペクトルを ON とみなして直近の OFF と比べる（OTF の ON の途中から見える。ON の間だけ意味があり、R・OFF の間の値は無意味）。「積分ごと」は直近の ON の積分と、その前の OFF（観測が終わった後は、どちらを選んでもこれ）。
+<footer>上: 直近の生のスペクトル（10.24 ms のダンプの平均。観測が終わった後は、その観測の最後の値）。下: Ta* = Tsys × (ON − OFF) / OFF（Tsys が決まる前は比のまま）。直近の ON の積分と、その前の OFF（ON の積分のたびに更新し、OFF・HOT の間は直前の ON のまま）。「生」で「表示しない」を選ぶと上の段を隠す。
 グラフの上にマウスを置くと値を出す。
 Vlsr = V<sub>src</sub> + c·(1 − f / f<sub>rest</sub>)（電波の定義。V<sub>src</sub> は L1 の dstrv。ロギングの周波数はドップラー追尾した系）。f<sub>rest</sub> の既定は L1 の dcent_freq（丸めてあることがあるので、線の静止周波数を窓ごとに入れられる）。</footer>
 <script>
@@ -237,7 +237,8 @@ function render() {
   const age = now - last.t;
   const stale = !paused && age > STALE_S;
   document.body.classList.toggle("stale", stale);
-  const xsel = $("xaxis").value, ym = $("ymode").value, tm = $("tamode").value;
+  const xsel = $("xaxis").value, ym = $("ymode").value;
+  document.body.classList.toggle("noraw", ym === "off");     // 生の段を隠す（全 Array 一括）
   const xm = xsel === "vlsr" && !last.vel ? "sky" : xsel;     // 速度の情報が無い（模擬など）ときは天空周波数
   document.body.classList.toggle("vlsr", xm === "vlsr");
   const it = last.integration;
@@ -288,7 +289,9 @@ function render() {
     const [x0, x1] = xRange(w, xm);
     // 生
     const r = rs && rs.windows.find((x) => x.array === w.array);
-    if (r && r.spec) {
+    if (ym === "off") {
+      // 隠しているので描かない
+    } else if (r && r.spec) {
       const ys = ym === "db" ? r.spec.map((v) => (v != null && v > 0 ? 10 * Math.log10(v) : null)) : r.spec;
       c.r.innerHTML = "";
       c.r.append(`${endTag}生 ・ ${hms(rs.t_end)} までの ${rs.avg_s} 秒（${r.n}/${r.n_expected} ダンプ）`);
@@ -298,23 +301,16 @@ function render() {
       c.r.textContent = "生";
       draw(c.raw, { empty: rt ? "ダンプがまだ無い" : "観測していない（ボードのデータを溜めていない）" });
     }
-    // Ta*（随時: 観測中で OFF があれば）
+    // Ta*（積分ごと: 直近の ON の積分）
     const a = byArr[w.array];
-    // 観測が終わった後は、最後の 1 秒が ON とは限らないので、Ta* は積分ごとの最後の ON を出す
-    if (tm === "live" && r && r.live && !ended) {
-      const k = r.live_unit === "K";
-      c.a.textContent = `${endTag}随時 ${k ? "Ta* [K]" : "(生−OFF)/OFF"} ・ ${hms(rs.t_end)} までの ${rs.avg_s} 秒 − OFF ${hms(r.live_t_off)}` +
-        (r.live_tsys ? ` ・ Tsys ${r.live_tsys.toFixed(1)} K` : " ・ Tsys まだ無し") +
-        ` ・ ロギングの最後のスキャン ${it && it.last_scan || "-"}（ON の間だけ意味がある）`;
-      draw(c.ta, { x0, x1, ys: r.live, color: css("--ta"), ylabel: k ? "Ta* [K]" : "比", zero: true, hover: c.ta._p && c.ta._p.hover });
-    } else if (a && a.spec) {
+    if (a && a.spec) {
       const unit = a.unit === "K" ? "Ta* [K]" : "(ON−OFF)/OFF";
       c.a.textContent = `${unit} ・ ON ${a.scan_id}（${hms(a.t)}）、OFF ${hms(a.t_off)}` + (a.tsys ? ` ・ Tsys ${a.tsys.toFixed(1)} K` : " ・ Tsys まだ無し") +
         (it.current ? "" : ` ・ 直前の観測 ${it.log_id}`);
       draw(c.ta, { x0, x1, ys: a.spec, color: css("--ta"), ylabel: a.unit === "K" ? "Ta* [K]" : "比", zero: true, hover: c.ta._p && c.ta._p.hover });
     } else {
       c.a.textContent = "Ta*";
-      draw(c.ta, { empty: tm === "live" && rt ? "OFF がまだ無い（OFF の積分の後に出る）" : it ? "ON がまだ無い（OFF → ON の後に出る）" : "観測していない" });
+      draw(c.ta, { empty: it ? "ON がまだ無い（OFF → ON の後に出る）" : "観測していない" });
     }
   }
 }
@@ -360,8 +356,8 @@ async function load() {
   render();
 }
 $("pause").addEventListener("click", (e) => { paused = !paused; e.target.setAttribute("aria-pressed", paused); e.target.textContent = paused ? "再開" : "一時停止"; render(); });
-for (const id of ["xaxis", "ymode", "tamode", "cols"]) $(id).addEventListener("change", () => { try { localStorage.setItem("ql." + id, $(id).value); } catch (e) {} render(); });
-for (const id of ["xaxis", "ymode", "tamode", "cols"]) { try { const v = localStorage.getItem("ql." + id); if (v) $(id).value = v; } catch (e) {} }
+for (const id of ["xaxis", "ymode", "cols"]) $(id).addEventListener("change", () => { try { localStorage.setItem("ql." + id, $(id).value); } catch (e) {} render(); });
+for (const id of ["xaxis", "ymode", "cols"]) { try { const v = localStorage.getItem("ql." + id); if (v) $(id).value = v; } catch (e) {} }
 window.addEventListener("resize", render);
 load();
 setInterval(load, 1000);
