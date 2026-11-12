@@ -22,6 +22,7 @@ ssh は引数を空白でつないで向こうのシェルに渡すので、差�
 
 暫定 LC の見回りを止めないよう、別スレッドで 1 つずつ処理する。
 暫定 LC を止めると、待っていた分は一時置き場に残る。マージに失敗したときは logging/ に移した後なので、そのパスで。
+マージが 0 でない終了コードで終わっても、<project>/ の直下に増えたファイルは otf/・psw/ に移し、終了コードと出力を知らせる（2026-11-13）。
 どちらも手で:
   python3 -m sam45compat.deliver <YKSP のロギング> --kind psw --config <設定>   （設定の deliver_root・merge_cmd・merge_root）
   python3 -m sam45compat.deliver <YKSP のロギング> --kind psw --root /srv/download   （マージなし）
@@ -170,19 +171,23 @@ class Deliverer:
                         f"{e!r}\nやり直し: python3 -m sam45compat.deliver {logging_path} --kind {job.kind} ...")
             return
         new = sorted(_files(proj) - before)
-        if r.returncode != 0:
-            tail = (r.stderr or r.stdout or b"").decode(errors="replace")[-2000:]
-            left = f"\n{proj} に残ったファイル: {' '.join(new)}" if new else ""
-            self.notify(f"{name.log_id}: マージに失敗（終了コード {r.returncode}）",
-                        f"YKSP のロギングは {logging_path} にある。後から手でやり直せる{left}\n{tail}")
-            return
-        if not new:
-            self.notify(f"{name.log_id}: マージの出力が無い", " ".join(cmd))
-            return
+        moved = []
+        # 終了コードが 0 でなくても、できた出力は振り分ける（2026-11-13）。OTF のマージは .Y のファイルでエラーを
+        # 返しても出力は正しかった。振り分けなくても <project>/ の直下で Apache から見えるので、残しても隠せない
         for f in new:
             d = move_file(os.path.join(proj, f), raw_dir)
             self.done.append(d)
+            moved.append(d)
             log.info("%s: 観測生データを移した → %s", name.log_id, d)
+        if r.returncode != 0:
+            tail = (r.stderr or r.stdout or b"").decode(errors="replace")[-2000:]
+            out = (f"\n出力は {raw_dir} に移した（中身を確かめる）: {' '.join(os.path.basename(m) for m in moved)}"
+                   if moved else "\n出力は無い")
+            self.notify(f"{name.log_id}: マージが終了コード {r.returncode} で終わった",
+                        f"YKSP のロギングは {logging_path} にある。後から手でやり直せる{out}\n{tail}")
+            return
+        if not new:
+            self.notify(f"{name.log_id}: マージの出力が無い", " ".join(cmd))
 
 
 def _files(d: str) -> set:

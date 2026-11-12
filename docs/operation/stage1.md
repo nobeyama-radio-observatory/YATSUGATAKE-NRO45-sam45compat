@@ -98,7 +98,7 @@ PYTHONPATH=src python3 -m sam45compat.lc --config my.json 2>&1 | tee -a lc.log
   PYTHONPATH=src python3 -c "import sys; from sam45compat import samlog as sl; print(sl.summary(sl.read_file(sys.argv[1])))" <YKSP のロギング>
   # (L2 の数, 使う Array の数, ED があるか)
   ```
-- [ ] 暫定 LC のログに「YKSP のロギングを移した」「マージ: ssh …」「観測生データを移した」が出て、`/srv/download/<group>/<project>/` の `logging/` と `psw/`（または `otf/`）にファイルがある。失敗したら通知が来る（やり直しは [`../design/data-delivery.md`](../design/data-delivery.md) の「実装」）
+- [ ] 暫定 LC のログに「YKSP のロギングを移した」「マージ: ssh …」「観測生データを移した」が出て、`/srv/download/<group>/<project>/` の `logging/` と `psw/`（または `otf/`）にファイルがある。マージが 0 でない終了コードで終わったら通知が来る（できた出力は `psw/`・`otf/` に移してある。v0.2.1 から。やり直しは [`../design/data-delivery.md`](../design/data-delivery.md) の「実装」）
 - [ ] SAM45 のロギングも、いつもどおりマージされていることを確かめる
 - [ ] **肩代わりする Array だけの L1（`iary_usefg`・`iary_num`）でマージが通るか**を記録する（通らなければ、そのとき考える）
 - [ ] マージが `dbebw` の値（32 MHz など、SAM45 に無い値）・`idmy_flag` = 1 で困らないかを記録する

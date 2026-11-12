@@ -120,10 +120,22 @@ class TestDeliver(unittest.TestCase):
         d.submit(dv.Job(self.log, "psw"))
         self.assertTrue(os.path.exists(os.path.join(self.root, "alice", "proj1", "logging", NAME)))
         self.assertEqual(len(note.sent), 1)
-        self.assertIn("マージに失敗（終了コード 3）", note.sent[0])
+        self.assertIn("マージが終了コード 3 で終わった", note.sent[0])
         self.assertIn("bad", note.sent[0])
-        self.assertIn("half.raw", note.sent[0])                 # 途中のファイルは振り分けず、知らせる
-        self.assertFalse(os.path.exists(os.path.join(self.root, "alice", "proj1", "psw")))
+        self.assertIn("half.raw", note.sent[0])
+        # 終了コードが 0 でなくても、できた出力は振り分ける（OTF のマージは .Y でエラーを返しても出力は正しかった。2026-11-13）
+        self.assertTrue(os.path.exists(os.path.join(self.root, "alice", "proj1", "psw", "half.raw")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "alice", "proj1", "half.raw")))
+
+    def test_merge_error_without_output(self):
+        note = Notifier()
+        nothing = [sys.executable, "-c", "import sys; sys.stderr.write('bad'); sys.exit(2)"]
+        d = dv.Deliverer(self.root, {"otf": nothing}, note, background=False)
+        d.submit(dv.Job(self.log, "otf"))
+        self.assertEqual(len(note.sent), 1)
+        self.assertIn("マージが終了コード 2 で終わった", note.sent[0])
+        self.assertIn("出力は無い", note.sent[0])
+        self.assertFalse(os.path.exists(os.path.join(self.root, "alice", "proj1", "otf")))
 
     def test_does_not_overwrite(self):
         dst_dir = os.path.join(self.root, "alice", "proj1", "logging")
