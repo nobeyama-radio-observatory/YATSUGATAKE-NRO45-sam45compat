@@ -61,7 +61,7 @@ footer { color: var(--mute); text-align: center; padding: 0 16px 16px; font-size
   <span id="info"></span>
   <div class="ctl">
     <label>横軸 <select id="xaxis"><option value="sky">天空周波数 [GHz]</option><option value="vlsr">Vlsr [km/s]</option><option value="if">IF [MHz]</option><option value="ch">ch</option></select></label>
-    <label>Ta* <select id="tamode"><option value="live">随時（1 秒ごと）</option><option value="integ">積分ごと</option></select></label>
+    <label>Ta* <select id="tamode"><option value="integ">積分ごと（ON のときだけ更新）</option><option value="live">随時（1 秒ごと。ON とは限らない）</option></select></label>
     <label>生 <select id="ymode"><option value="db">dB</option><option value="lin">線形</option></select></label>
     <button id="pause" aria-pressed="false">一時停止</button>
     <a href="../status/">状態のページ</a>
