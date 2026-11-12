@@ -72,7 +72,7 @@ class LcConfig:
     out_backend: str = "YKSP"                     # separate のときのファイル名の装置
     ifatt_mode: str = mp.IFATT_FOLLOW
     assign: Dict[str, mp.Slot] = field(default_factory=lambda: dict(mp.DEFAULT_ASSIGN))
-    sam45_if_ascending: bool = True
+    sam45_if_ascending: bool = False              # False: 実測で決めた向き（2026-11-12。docs/design/standin-study.md の「SAM45 の k と IF の向き」）
     sam45_k_offset: float = 0.0
     shift: Optional[int] = None
     tint_s: float = 0.01024

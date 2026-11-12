@@ -62,9 +62,12 @@ class MappingError(ValueError):
 class Sam45IfModel:
     """SAM45 の 524,288 ch の番号 k と IF の対応。
 
-    **未確認**（docs/plan.md の調査）: 向き（k が増えると IF が上がるか）と、ch の中心の位置
-    （k_offset。k の ch の中心が k + k_offset）。サンプルの窓は中央（3 GHz）にあり、向きでは区別できない。
-    段階 1 の同じ IF の比較で確かめる。
+    向き: **ascending=False（k が増えると IF が下がる、IF = 4000 − k·Δ）で使う**（2026-11-12 に実測で決めた。
+    暫定 LC の設定 sam45_if_ascending。docs/design/standin-study.md の「SAM45 の k と IF の向き」）。
+    True（初めの仮定）では、窓が 3 GHz から外れると YATSUGATAKE が別の IF を見て、窓の中の ch の向きも逆になっていた。
+    False で 2 つの観測（3 GHz の窓・3 GHz から外れた 2 窓）の窓の場所と ch の向きの両方が SAM45 と合う。
+    既定の値（True）は試験の数値のために残している。
+    ch の中心の位置（k_offset。k の ch の中心が k + k_offset）は未確認。
     """
     ascending: bool = True
     k_offset: float = 0.0

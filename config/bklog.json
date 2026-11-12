@@ -15,7 +15,7 @@
     "A05": ["A", 0], "A06": ["B", 0], "A07": ["C", 0], "A08": ["D", 0],
     "A21": ["A", 1], "A22": ["B", 1], "A23": ["C", 1], "A24": ["D", 1]
   },
-  "sam45_if_ascending": true,
+  "sam45_if_ascending": false,
   "sam45_k_offset": 0.0,
   "tint_s": 0.01024,
   "scale": 1.0,

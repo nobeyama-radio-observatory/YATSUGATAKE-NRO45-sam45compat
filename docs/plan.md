@@ -23,7 +23,7 @@ sam45compat の残りの作業。方式と決めたことは [`design/standin-st
 |---|---|---|
 | [ ] | **マージが YKSP のロギングに何を求めるか**（起動の仕方は 2026-11-11 に決まった: [`design/data-delivery.md`](design/data-delivery.md) の「マージ」）: ほかの装置のロギングとの結び付け、L0 の名前・バックエンドの種類、肩代わりする Array だけの L1 で通るか | 2-5 |
 | [ ] | **f2 で書き換える L1 の欄**（マージ・QL が周波数軸の計算に使う欄はどれか） | 2-3 |
-| [ ] | `istart_chan`・`iend_chan` と IF 周波数の対応（向き・ch の中心）。今は IF = 2000 ＋ k·Δ と仮定（段階 1 の比較で確かめる） | 2-1・2-6 |
+| [ ] | `istart_chan`・`iend_chan` と IF 周波数の対応（向き・ch の中心）。向きは 2026-11-12 に実測で決めた（k が増えると IF が下がる。`sam45_if_ascending: false`。[`design/standin-study.md`](design/standin-study.md) の「SAM45 の k と IF の向き」）。残りは ch の中心（`k_offset`） | 2-1・2-6 |
 | [ ] | マージが `dbebw` に SAM45 に無い値（32e6 など）・`idmy_flag` = 1 をどう扱うか | 2-5 |
 | [ ] | 観測の途中で分光の設定が変わることはあるか。ログ ID から最初の R までの時間の最短（ログ ID は観測の開始より前に付き、ファイルは `cst_time` の頃に見える。`cst_time` から最初の R までが要る。2026-11-10） | 2-2 |
 | [ ] | Tsys の T_R（サンプルから逆算して ≒ 293 K。固定か測った温度か） | 2-3 |
