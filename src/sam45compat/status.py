@@ -170,7 +170,7 @@ def lc_snapshot(lc: "LC") -> Dict[str, object]:
         "recent": list(lc.recent),
         "deliver": dl,
         "disks": disks,
-        "notices": [{"t": t, "subject": s} for t, s in list(lc.notify.recent)],
+        "notices": [{"t": n[0], "subject": n[1], "body": n[2] if len(n) > 2 else ""} for n in list(lc.notify.recent)],
     }
 
 

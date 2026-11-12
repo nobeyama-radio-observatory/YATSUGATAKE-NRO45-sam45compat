@@ -4,12 +4,15 @@
 方針は docs/design/standin-study.md の「周波数軸」「値と IFATT」。
 
 - SAM45: 4000 MSPS、第 2 ナイキスト（IF 2000〜4000 MHz）を 524,288 ch に分け、窓ごとに
-  istart_chan〜iend_chan を ichan_avg 個ずつ束ねて 4096 ch を出す
+  istart_chan〜iend_chan を ichan_avg 個ずつ束ねて 4096 ch（ichannel。2048 などもある）を出す
 - YATSUGATAKE: 4096 MSPS、IF 2048〜4096 MHz。SAM45-Fine（窓 256〜16 MHz、ADC ごとに 2 窓）と
   SAM45-Wide（2048 / 1024 / 512 MHz、束ね B = 4 / 2 / 1、B は ADC ごとに 1 つ）
 - 記録の軸は IF(i) = if_mhz ＋ (i − 2047)·df（IF の昇順、YATSUGATAKE の interface.md 6.）
 - 帯域はどれも YATSUGATAKE のほうが 2.4 % 広く、ch 間隔が合わない。f2 で、差し替える Array の
   L1 の周波数の欄を YATSUGATAKE の実際の値に書き換える
+- SAM45 の ch 数（ichannel）が 4096 より少ないとき（2026-11-12 の 2 窓の観測で 2048）は、YATSUGATAKE の 4096 ch を
+  隣り合う 4096 / ichannel 個ずつ平均して同じ ch 数にする（YkWindow.nbin）。SAM45 は fary_data の前から ichannel 個に値を入れ、
+  残りを 0 にしている（2026-11-12 の観測で確認）ので、同じように詰める
 """
 
 from __future__ import annotations
@@ -22,6 +25,8 @@ import numpy as np
 from . import samlog as sl
 
 NCH = 4096
+# SAM45 の ch 数（ichannel）として受けるもの。YATSUGATAKE の 4096 ch を割り切れること
+SAM45_NCH_OK = (4096, 2048, 1024)
 
 # ---- SAM45 ----
 SAM45_IF_LO_MHZ = 2000.0
@@ -95,9 +100,13 @@ class Sam45Window:
     k_start: int
     k_end: int
     avg: int
-    if_of_ch: np.ndarray        # 出力の ch 1..4096 の IF [MHz]
+    if_of_ch: np.ndarray        # 出力の ch 1..nch の IF [MHz]
     sky_a: float                # sky [Hz] = sky_a ＋ sky_b·IF [MHz]·1e6
     sky_b: float
+
+    @property
+    def nch(self) -> int:
+        return len(self.if_of_ch)
 
     @property
     def if_center_mhz(self) -> float:
@@ -120,15 +129,39 @@ class YkWindow:
     if_mhz: float               # 記録の if_mhz（送る 2047 番目の ch の IF）
     set_keys: Dict[str, str]
     reverse: bool               # True なら記録（IF の昇順）を逆にして L2 に入れる
-    sky_hz: np.ndarray          # L2 の ch 1..4096 の sky [Hz]（reverse を考えた後）
+    sky_hz: np.ndarray          # L2 の ch 1..nch_out の sky [Hz]（reverse・nbin を考えた後）
+    nbin: int = 1               # L2 の 1 ch に平均する記録の ch の数（SAM45 の ichannel = 4096 / nbin）
+
+    @property
+    def nch_out(self) -> int:
+        """L2 の ch 数（SAM45 の ichannel と同じ）。"""
+        return NCH // self.nbin
+
+    @property
+    def out_df_mhz(self) -> float:
+        """L2 の ch の間隔 [MHz]。"""
+        return self.df_mhz * self.nbin
 
     def record_if_axis(self) -> np.ndarray:
-        """記録の ch の IF [MHz]（IF の昇順）。"""
+        """記録の ch の IF [MHz]（IF の昇順、4096 ch）。"""
         return self.if_mhz + (np.arange(NCH) - 2047) * self.df_mhz
 
+    def out_if_axis(self) -> np.ndarray:
+        """L2 の ch の IF [MHz]（IF の昇順。nbin 個の平均の中心）。"""
+        return _bin(self.record_if_axis(), self.nbin)
+
     def l2_order(self, spec: np.ndarray) -> np.ndarray:
-        """記録のスペクトル（IF の昇順）→ L2 の ch の順。"""
+        """記録のスペクトル（IF の昇順、4096 ch）→ L2 の ch の順（nch_out ch）。"""
+        spec = _bin(spec, self.nbin)
         return spec[::-1] if self.reverse else spec
+
+
+def _bin(a: np.ndarray, nbin: int) -> np.ndarray:
+    """隣り合う nbin 個ずつ平均する。"""
+    if nbin == 1:
+        return a
+    a = np.asarray(a)
+    return a.reshape(-1, nbin).mean(axis=1)
 
 
 @dataclass
@@ -169,19 +202,20 @@ def sam45_window(obs, index: int, ifm: Sam45IfModel) -> Sam45Window:
     """L1（LogObs）から Array の窓を読む。"""
     if not obs.iary_usefg[index]:
         raise MappingError(f"{sl.array_label(index)} は使われていない")
-    if obs.ichannel[index] != NCH:
-        raise MappingError(f"{sl.array_label(index)} の ch 数が {obs.ichannel[index]}")
+    nch = int(obs.ichannel[index])
+    if nch not in SAM45_NCH_OK:
+        raise MappingError(f"{sl.array_label(index)} の ch 数が {nch}（受けるのは {SAM45_NCH_OK}）")
     sub, spw = _sub_of(obs, index), _spw_of(index)
     if spw >= obs.in_spec_window[sub]:
         raise MappingError(f"{sl.array_label(index)} の窓 {spw + 1} が設定されていない")
     k0, k1 = obs.istart_chan[sub][spw], obs.iend_chan[sub][spw]
     avg = obs.ichan_avg[sub][spw]
-    if avg <= 0 or k1 - k0 + 1 != NCH * avg:
-        raise MappingError(f"{sl.array_label(index)}: istart {k0}・iend {k1}・avg {avg} が 4096 ch にならない")
+    if avg <= 0 or k1 - k0 + 1 != nch * avg:
+        raise MappingError(f"{sl.array_label(index)}: istart {k0}・iend {k1}・avg {avg} が {nch} ch にならない")
     bw = obs.dbebw[index] / 1e6
-    if abs(bw - NCH * avg * SAM45_DK_MHZ) > 1e-6 * bw:
+    if abs(bw - nch * avg * SAM45_DK_MHZ) > 1e-6 * bw:
         raise MappingError(f"{sl.array_label(index)}: 帯域 {bw} MHz と istart〜iend の幅が合わない")
-    c = np.arange(1, NCH + 1)
+    c = np.arange(1, nch + 1)
     k = k0 + (c - 1) * avg + (avg - 1) / 2
     if_c = ifm.if_mhz(k)
     # sky = a + b·IF。dfqdat_fq は 10 kHz に丸められている（サンプル）ので、傾きは向きだけを
@@ -279,11 +313,12 @@ def plan(obs, assign: Dict[str, Slot] = None, ifm: Sam45IfModel = Sam45IfModel()
         except MappingError as e:
             p.skipped[idx] = str(e)
             continue
-        if_rec = if_mhz + (np.arange(NCH) - 2047) * df
+        nbin = NCH // s.nch
+        if_rec = _bin(if_mhz + (np.arange(NCH) - 2047) * df, nbin)
         reverse = not s.if_ascending          # SAM45 の ch の向きに合わせる
         if_l2 = if_rec[::-1] if reverse else if_rec
         sky = s.sky_a + s.sky_b * if_l2 * 1e6
-        p.windows[idx] = YkWindow(idx, slot, kind, w, df, if_mhz, keys, reverse, sky)
+        p.windows[idx] = YkWindow(idx, slot, kind, w, df, if_mhz, keys, reverse, sky, nbin)
     return p
 
 
@@ -305,8 +340,8 @@ def rewrite_l1(obs_rec: sl.Record, p: Plan, ifatt_mode: str) -> sl.Record:
     o = out.s
     for idx, w in p.windows.items():
         o.dbebw[idx] = w.bw_mhz * 1e6
-        o.dbechwid[idx] = w.df_mhz * 1e6
-        o.dberes[idx] = w.df_mhz * 1e6
+        o.dbechwid[idx] = w.out_df_mhz * 1e6
+        o.dberes[idx] = w.out_df_mhz * 1e6
         for j in range(2):
             ch = int(round(o.dfqdat_ch[idx][j]))
             o.dfqdat_fq[idx][j] = float(w.sky_hz[ch - 1])

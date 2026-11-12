@@ -160,9 +160,12 @@ function renderObs(lc, now) {
       s.arrays.join(" ") + (Object.keys(s.skipped || {}).length ? `（取らない ${Object.keys(s.skipped).join(" ")}）` : ""),
       s.n_l2, s.n_invalid ? tag("warn", s.n_invalid) : 0, s.pending,
       s.t_last_l2 ? dur(now - s.t_last_l2) + "前" : "-", mdhms(s.t_start),
-      s.notime ? tag("bad", s.notime) : 0])));
+      s.notime ? tag("bad", s.notime) : 0])),
+    // 取らない理由（2026-11-12。窓が 1 つも組めないと「窓の設定」の欄に出ないので、ここに出す）
+    ...ss.filter((s) => Object.keys(s.skipped || {}).length).map((s) => el("p", {}, tag("warn", "取らない"), ` ${s.log_id}: `,
+      Object.entries(s.skipped).map(([a, r]) => `${a}: ${r}`).join(" ・ "))));
   if (ss.some((s) => PHASE[s.phase] === "bad" || s.notime)) return "bad";
-  if (ss.some((s) => s.n_invalid)) return "warn";
+  if (ss.some((s) => s.n_invalid || (!s.arrays.length && Object.keys(s.skipped || {}).length))) return "warn";
   return "ok";
 }
 
@@ -218,7 +221,7 @@ function renderDisk(lc) {
 function renderNotices(lc) {
   const ns = (lc.notices || []).slice().reverse();
   $("notices").replaceChildren(ns.length
-    ? grid(["時刻", "件名"], ns.map((n) => [mdhms(n.t), n.subject]))
+    ? grid(["時刻", "件名", "中身"], ns.map((n) => [mdhms(n.t), n.subject, n.body || ""]))
     : el("p", { class: "mute" }, "LC を起こしてから、まだ無い"));
 }
 

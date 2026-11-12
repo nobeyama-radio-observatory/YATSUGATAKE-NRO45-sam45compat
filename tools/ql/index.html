@@ -218,7 +218,7 @@ function xRange(w, mode) {
     return [v(w.sky0_ghz), v(w.sky1_ghz)];
   }
   if (mode === "if") return [w.if0_mhz, w.if1_mhz];
-  if (mode === "ch") return [1, 4096];
+  if (mode === "ch") return [1, w.nch || 4096];
   return [w.sky0_ghz, w.sky1_ghz];
 }
 const XLABEL = { sky: "天空周波数 [GHz]", vlsr: "Vlsr [km/s]", if: "IF [MHz]", ch: "ch" };

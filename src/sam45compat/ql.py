@@ -8,7 +8,7 @@
 - 随時の Ta*（2026-11-11）: 生のスペクトル（直近 ql_avg_s 秒）と、積分ごとの直近の OFF から、Tsys × (生 − OFF) / OFF を
   ql_s ごとに出す（観測が終わった後は、最後に出したものを last_realtime として残す）。OTF のように ON が長く続くスキャンの途中から見るため。スキャンの種類を待たない（SAM45 のロギングは
   積分が終わってから届く）ので、ON の間だけ意味がある（R・OFF の間の値は無意味）。生は L2 と同じ倍率（cfg.scale）にそろえる
-- どちらも L2 の ch の順（ch 1..4096）で、ql_nbin 点に平均して減らす。横軸は天空周波数（ch 1 と ch 4096 の値を添える）
+- どちらも L2 の ch の順（ch 1..4096。SAM45 の ichannel が 2048 なら 2048）で、ql_nbin 点に平均して減らす。横軸は天空周波数（ch 1 と ch 4096 の値を添える）
 - 速度の横軸のため、L1 の dstrv（天体の速度 [m/s]）と Array ごとの dcent_freq（静止周波数の既定）を添える（vel_info）。
   45m のロギングの周波数はドップラー追尾した系（dstrv で動く天体の線が静止周波数に来る）なので、
   V = dstrv + c·(1 − f / f_rest)（電波の定義）。サンプル（R Cas の SiO v=1、2026-09-10）で 24.95 km/s に出ることを確かめた
@@ -43,7 +43,7 @@ SCAN_OFF = "OFF"
 
 
 def reduce(spec: np.ndarray, nbin: int) -> List[Optional[float]]:
-    """4096 ch を nbin 点に平均し、有効数字 5 桁の数の並びにする（有限でない値は None）。"""
+    """スペクトル（4096 ch など）を nbin 点に平均し、有効数字 5 桁の数の並びにする（有限でない値は None）。"""
     a = np.asarray(spec, dtype=np.float64)
     if nbin and len(a) % nbin == 0 and len(a) > nbin:
         a = a.reshape(nbin, -1).mean(axis=1)
@@ -59,11 +59,11 @@ def vel_info(obs, plan: mp.Plan) -> Dict[str, object]:
 
 def axis(w: mp.YkWindow, vel: Optional[Dict[str, object]] = None) -> Dict[str, object]:
     """窓の名前と、横軸（L2 の ch 1 と ch 4096 の天空周波数 [GHz]、IF [MHz]、静止周波数の既定 [GHz]）。"""
-    ifs = w.record_if_axis()
+    ifs = w.out_if_axis()
     if w.reverse:
         ifs = ifs[::-1]
     sky = np.asarray(w.sky_hz, dtype=float)
-    return {"array": sl.array_label(w.array), "adc": w.slot.adc, "stream": w.slot.stream,
+    return {"array": sl.array_label(w.array), "adc": w.slot.adc, "stream": w.slot.stream, "nch": w.nch_out,
             "sky0_ghz": round(float(sky[0]) / 1e9, 9), "sky1_ghz": round(float(sky[-1]) / 1e9, 9),
             "if0_mhz": round(float(ifs[0]), 6), "if1_mhz": round(float(ifs[-1]), 6),
             "rest_ghz": (vel or {}).get("rest_ghz", {}).get(w.array)}

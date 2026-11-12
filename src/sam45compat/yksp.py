@@ -45,10 +45,13 @@ def tsys_k(r_mean: float, sky_mean: float, ifatt_db: float, t_load_k: float = T_
 
 
 def set_spectrum(d: sl.LogDat, spec) -> None:
-    """L2 の fary_data に 4096 ch を入れる（little-endian の float32）。"""
+    """L2 の fary_data にスペクトルを入れる（little-endian の float32）。4096 ch より少なければ（ichannel が 2048 など）
+    前から詰めて残りを 0 にする（SAM45 と同じ。2026-11-12 の観測で確認）。"""
     arr = np.ascontiguousarray(spec, dtype="<f4")
-    if arr.shape != (sl.CHMAX_LOGGING,):
+    if arr.ndim != 1 or not 0 < len(arr) <= sl.CHMAX_LOGGING:
         raise ValueError(f"スペクトルの形 {arr.shape}")
+    if len(arr) < sl.CHMAX_LOGGING:
+        arr = np.concatenate([arr, np.zeros(sl.CHMAX_LOGGING - len(arr), dtype="<f4")])
     ctypes.memmove(ctypes.addressof(d) + sl.LogDat.fary_data.offset, arr.tobytes(), arr.nbytes)
 
 
@@ -186,7 +189,7 @@ class YkspBuilder:
             return False, self.plan.skipped[idx], None
         w = self.plan.windows[idx]
         if integ.scan_type == SCAN_ZERO:
-            return True, "", np.full(sl.CHMAX_LOGGING, ZERO_VALUE)
+            return True, "", np.full(w.nch_out, ZERO_VALUE)
         b = self.dumps.interval(w.slot.key, integ.st_ns, integ.ed_ns)
         if b.spec is None:
             return False, "ダンプが無い", None

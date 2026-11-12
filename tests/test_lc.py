@@ -208,6 +208,52 @@ class TestBklogLayout(unittest.TestCase):
         obs2 = _obs(arrays=range(8))
         self.assertEqual(lcm.mirror_sources(obs2, mirror), {})
 
+    def test_nch_2048_two_windows(self):
+        """2026-11-12 の観測と同じ形: サブアレイ分割 ON・2 窓・62.5 MHz を 2048 ch。SAM45 のロギングは A01〜A04・A17〜A20 だけ。"""
+        import numpy as np
+        obs = _obs(bw1=62.5, k0_1=217024, bw2=62.5, k0_2=413824, arrays=range(4), arrays2=range(16, 20), nch=2048)
+        o = obs.s
+        sl.set_cstr(o, "csub_array", "ON")
+        o.in_spec_window[1] = 2
+        for spw in range(2):
+            o.istart_chan[1][spw], o.iend_chan[1][spw], o.ichan_avg[1][spw] = \
+                o.istart_chan[0][spw], o.iend_chan[0][spw], o.ichan_avg[0][spw]
+        mirror = {"A05": "A01", "A06": "A02", "A07": "A03", "A08": "A04",
+                  "A21": "A17", "A22": "A18", "A23": "A19", "A24": "A20"}
+        tmp = tempfile.TemporaryDirectory()
+        cfg = lcm.LcConfig(log_dir=tmp.name, ready_timeout_s=5.0, mirror=mirror,
+                           ql_path=os.path.join(tmp.name, "ql.json"), ql_s=3600)
+        lc = lcm.LC(cfg, FakeSpectrometer())
+        try:
+            recs = _sam45_records(obs, list(range(4)) + list(range(16, 20)), scans=("ZERO", "R", "SKY", "OFF", "ON"))
+            sam = os.path.join(tmp.name, NAME)
+            for k in range(1, len(recs) + 1):
+                _write(sam, recs[:k])
+                lc.step(0.0)
+            lc.step(0.0)
+            out = sl.read_file(os.path.join(tmp.name, NAME.replace(".SAM45.", ".YKSP.")))
+            l1 = out[1].s
+            arrays = [4, 5, 6, 7, 20, 21, 22, 23]
+            self.assertEqual([i for i in range(32) if l1.iary_usefg[i]], arrays)
+            self.assertEqual({l1.ichannel[i] for i in arrays}, {2048})
+            self.assertAlmostEqual(l1.dbechwid[4], 64e6 / 2048)
+            l2 = [r.s for r in out if r.kind == "L2"]
+            self.assertEqual(len(l2), 5 * 8)
+            self.assertTrue(all(x.idmy_flag == 0 for x in l2))
+            for x in l2:
+                d = np.frombuffer(bytes(x.fary_data), dtype="<f4")
+                self.assertTrue(np.all(d[:2048] != 0) and np.all(d[2048:] == 0))    # 前の 2048 個に詰め、残りは 0（SAM45 と同じ）
+            self.assertEqual(lc.recent[0]["arrays"], ["A05", "A06", "A07", "A08", "A21", "A22", "A23", "A24"])
+            lc.ql_writer.write()
+            import json
+            with open(cfg.ql_path) as f:
+                it = json.load(f)["integration"]
+            w0 = it["windows"][0]
+            self.assertEqual((it["n_on"], len(it["windows"]), len(w0["spec"]), w0["nch"]), (1, 8, 1024, 2048))
+        finally:
+            lc.close()
+            tmp.cleanup()
+
     def test_unreadable_dir_does_not_stop(self):
         with tempfile.TemporaryDirectory() as d:
             cfg = lcm.LcConfig(watch=[[os.path.join(d, "none"), os.path.join(d, "out")]])

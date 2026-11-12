@@ -12,8 +12,9 @@ from sam45compat import samlog as sl
 SAMPLE = os.environ.get("SAM45_SAMPLE")
 
 
-def _obs(bw1=31.25, bw2=None, k0_1=258048, k0_2=None, arrays=(4, 5, 6, 7), arrays2=()):
-    """模擬の L1。窓 1（A01〜A16）と窓 2（A17〜A32）。sky は USB 風に IF の昇順で下がる（サンプルと同じ向き）。"""
+def _obs(bw1=31.25, bw2=None, k0_1=258048, k0_2=None, arrays=(4, 5, 6, 7), arrays2=(), nch=4096):
+    """模擬の L1。窓 1（A01〜A16）と窓 2（A17〜A32）。sky は USB 風に IF の昇順で下がる（サンプルと同じ向き）。
+    nch: Array の ch 数（ichannel。2026-11-12 の 2 窓の観測は 2048）。"""
     rec = sl.new_record("L1")
     o = rec.s
     sl.set_cstr(o, "csub_array", "OFF")
@@ -21,28 +22,57 @@ def _obs(bw1=31.25, bw2=None, k0_1=258048, k0_2=None, arrays=(4, 5, 6, 7), array
     for spw, bw, k0 in ((0, bw1, k0_1), (1, bw2, k0_2)):
         if bw is None:
             continue
-        avg = int(round(bw / mp.SAM45_DK_MHZ / 4096))
+        avg = int(round(bw / mp.SAM45_DK_MHZ / nch))
         o.istart_chan[0][spw] = k0
-        o.iend_chan[0][spw] = k0 + 4096 * avg - 1
+        o.iend_chan[0][spw] = k0 + nch * avg - 1
         o.ichan_avg[0][spw] = avg
     for idx in list(arrays) + list(arrays2):
         spw = 0 if idx < 16 else 1
         bw = bw1 if spw == 0 else bw2
         o.iary_usefg[idx] = 1
-        o.ichannel[idx] = 4096
+        o.ichannel[idx] = nch
         o.dbebw[idx] = bw * 1e6
         o.iary_ifatt[idx] = 5
         # dfqdat: ch 4096 と ch 1、sky = 46122 MHz − IF
         avg = o.ichan_avg[0][spw]
         k0 = o.istart_chan[0][spw]
         if_1 = mp.SAM45_IF_LO_MHZ + (k0 + (avg - 1) / 2) * mp.SAM45_DK_MHZ
-        if_n = mp.SAM45_IF_LO_MHZ + (k0 + 4095 * avg + (avg - 1) / 2) * mp.SAM45_DK_MHZ
-        o.dfqdat_ch[idx][0], o.dfqdat_ch[idx][1] = 4096, 1
+        if_n = mp.SAM45_IF_LO_MHZ + (k0 + (nch - 1) * avg + (avg - 1) / 2) * mp.SAM45_DK_MHZ
+        o.dfqdat_ch[idx][0], o.dfqdat_ch[idx][1] = nch, 1
         o.dfqdat_fq[idx][0] = (46122.0 - if_n) * 1e6
         o.dfqdat_fq[idx][1] = (46122.0 - if_1) * 1e6
         o.dfqdat_f0[idx] = (46122.0 - (if_1 + if_n) / 2) * 1e6
     o.iary_num = len(arrays) + len(arrays2)
     return rec
+
+
+class TestNch2048(unittest.TestCase):
+    """SAM45 の Array が 2048 ch（2026-11-12 の 2 窓の観測: 62.5 MHz を 8 ch ずつ束ねて 2048 ch）。"""
+
+    def test_plan(self):
+        o = _obs(bw1=62.5, k0_1=217024, bw2=62.5, k0_2=413824, arrays=(4,), arrays2=(20,), nch=2048)
+        self.assertEqual(o.s.ichan_avg[0][0], 8)
+        p = mp.plan(o.s)
+        self.assertEqual((sorted(p.windows), p.skipped), ([4, 20], {}))
+        w = p.windows[4]
+        self.assertEqual((w.bw_mhz, w.nbin, w.nch_out, len(w.sky_hz)), (64.0, 2, 2048, 2048))
+        self.assertAlmostEqual(w.out_df_mhz, 64 / 2048)
+        # L2 の ch c の sky は、SAM45 の ch c の sky と半 ch 以内（中心は記録の ch の格子に丸める）
+        s = mp.sam45_window(o.s, 4, mp.Sam45IfModel())
+        sam_sky = s.sky_a + s.sky_b * s.if_of_ch * 1e6
+        self.assertLess(np.max(np.abs(w.sky_hz - sam_sky)) / 1e6, 0.03 * 64 / 2 + w.df_mhz)   # 帯域の差（2.4 %）の半分ほど
+        spec = np.arange(4096.0)
+        out = w.l2_order(spec)
+        self.assertEqual(len(out), 2048)
+        self.assertEqual(out[0], 0.5 if not w.reverse else 4094.5)                             # 隣り合う 2 ch の平均
+        l1 = mp.rewrite_l1(o, p, mp.IFATT_FOLLOW).s
+        self.assertAlmostEqual(l1.dbechwid[4], 64e6 / 2048)
+        self.assertEqual(l1.ichannel[4], 2048)
+
+    def test_bad_nch(self):
+        o = _obs(arrays=(4,))
+        o.s.ichannel[4] = 3000
+        self.assertIn("ch 数が 3000", mp.plan(o.s).skipped[4])
 
 
 class TestFine(unittest.TestCase):

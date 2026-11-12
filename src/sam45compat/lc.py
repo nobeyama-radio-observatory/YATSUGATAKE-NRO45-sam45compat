@@ -369,7 +369,8 @@ def window_info(plan: mp.Plan) -> List[Dict[str, object]]:
         ok = np.isfinite(sky)
         out.append({"array": sl.array_label(i), "adc": w.slot.adc, "stream": w.slot.stream, "kind": w.kind,
                     "if_mhz": round(float(w.if_mhz), 6), "if_lo_mhz": round(float(ifs[0]), 6),
-                    "if_hi_mhz": round(float(ifs[-1]), 6), "bw_mhz": w.bw_mhz, "df_khz": round(w.df_mhz * 1e3, 6),
+                    "if_hi_mhz": round(float(ifs[-1]), 6), "bw_mhz": w.bw_mhz, "df_khz": round(w.out_df_mhz * 1e3, 6),
+                    "nch": w.nch_out,
                     "sky_lo_ghz": round(float(sky[ok].min()) / 1e9, 6) if ok.any() else None,
                     "sky_hi_ghz": round(float(sky[ok].max()) / 1e9, 6) if ok.any() else None,
                     "reverse": bool(w.reverse),

@@ -275,7 +275,14 @@ SAM45 と YATSUGATAKE は、どちらも 4 GSPS で第 2 ナイキストの 2〜
   - 窓の中心は SAM45 の指定（`dfqdat_f0` など）に合わせ、YATSUGATAKE の窓を置く。YATSUGATAKE の窓の中心は格子（Fine は NCO の分解能、Wide は 125 kHz の ch）に寄るので、寄せた後の実際の値で L1 を書く
   - 採らなかった案 f1: YATSUGATAKE のスペクトルを SAM45 の ch の格子に補間し直す（L1 はそのままだが、分解能と雑音の ch 間の相関が変わる）
 - **Wide と Fine は同時に使えない**（別の bit）。1 つの観測で肩代わりする Array に 500 MHz 以上と 250 MHz 以下が混ざるときは、肩代わりできない制約として受け入れる（2026-11-06）。そのときは **250 MHz 以下の Array を取り**、取れない Array は **`idmy_flag` = 1 で差し込み、運用者に知らせる**（2026-11-06）
-- SAM45 は ch が増えると周波数が下がる向き（サンプルの USB）。YATSUGATAKE の ch の向きとの対応を合わせる
+- SAM45 は ch が増えると周波数が下がる向き（サンプルの USB）。YATSUGATAKE の ch の向きとの対応を合わせる。
+  2026-11-12 の観測（87 GHz 帯）は逆に ch が増えると上がる向きだった。向きは観測ごとに `dfqdat` の 2 点から決める（`mapping.sam45_window`）
+- **SAM45 の ch 数が 4096 より少ないとき**（2026-11-12）: SAM45 は 1 Array を 2048 ch で出すことがある（2026-11-12 の 2 窓の観測。
+  62.5 MHz を 8 ch ずつ束ねて 2048 ch、30.52 kHz。`ichannel` = 2048）。今までは 4096 ch しか受けず、肩代わりの Array を全部取らなかった。
+  YATSUGATAKE は同じ帯域の窓を 4096 ch で取り、**隣り合う 4096 / `ichannel` 個を平均して同じ ch 数にする**（`YkWindow.nbin`。受けるのは 4096・2048・1024）。
+  ch 間隔は YATSUGATAKE の値（64 MHz / 2048 = 31.25 kHz）で、f2 と同じく L1 の `dbechwid`・`dberes`・`dfqdat_fq` を書き換える。
+  L2 の `fary_data`（4096 個）は、SAM45 と同じく前から `ichannel` 個に値を入れ、残りを 0 にする（SAM45 の L2 で、前の 2048 個だけが 0 でないことを確かめた。2026-11-12）。
+  YATSUGATAKE の記録は窓ごとに 4096 ch（`recorder` が受けるのも 4096 ch）なので、平均は LC の側で行う。比べる道具（`compare.py`）は 4096 ch のままで、2048 ch の観測には使えない
 
 ### 値と IFATT
 
