@@ -7,6 +7,11 @@
 
 制御の口は同時に 1 接続だけ（specd が 2 つ目を ERR BUSY で断る）。この中の命令（準備・終わり・状態の問い合わせ）は
 1 つのロックで順番にし、状態のページ（status.py）の問い合わせが観測の準備とぶつからないようにする。
+
+分光計は 1 台なので、使う観測（持ち主）を 1 つにする（2026-11-13）。LC が遅れると、前の観測の後始末と次の観測の
+準備が重なることがある（2026-11-13 の夜、終わった PSW の準備と終わりが、走っていた OTF の分光計を止めた）。
+- 準備は、持ち主より新しい（log_id が後の）観測だけができる。古い観測の準備は断る（その観測は idmy_flag = 1 になる）
+- 終わり（STOP）は持ち主だけがする。持ち主でない観測の終わりでは何もしない
 """
 
 from __future__ import annotations
@@ -86,6 +91,7 @@ class BoardSpectrometer:
         # 載っている bit と specd の版（ID の答え。観測ごとに読み直す。版の記録用。読めなければ {"error": …}）
         self.ident: Optional[Dict[str, str]] = None
         self._lock = threading.Lock()      # 制御の口（1 接続まで）を使う命令を順番にする
+        self.owner: Optional[str] = None   # いま分光計を使っている観測の log_id（準備で取り、終わりで離す）
 
     def _ctl(self, timeout: float = 60.0) -> Control:
         return Control(self.cfg.host, self.cfg.ctl_port, timeout)
@@ -101,8 +107,13 @@ class BoardSpectrometer:
     def _prepare(self, plan: mp.Plan, log_id: str) -> None:
         if plan.kind not in self.cfg.bits:
             raise SpecdError(f"bit の種類 {plan.kind!r} の名前が設定に無い")
+        if self.owner is not None and self.owner > log_id:
+            raise SpecdError(f"後の観測 {self.owner} が分光計を使っている（この観測の準備が遅れた）")
+        if self.owner is not None and self.owner != log_id:
+            log.warning("%s: 前の観測 %s がまだ分光計を使っている。打ち切ってこちらに切り替える", log_id, self.owner)
         want = self.cfg.bits[plan.kind]
         self._close_store()
+        self.owner = log_id
         c = self._ctl(self.cfg.load_timeout_s)
         try:
             st = self._ok(c, "STATUS")
@@ -152,6 +163,10 @@ class BoardSpectrometer:
             self._finish(log_id)
 
     def _finish(self, log_id: str) -> None:
+        if self.owner != log_id:
+            log.info("%s: 分光計の持ち主でない（%s）。止めない", log_id, self.owner or "-")
+            return
+        self.owner = None
         try:
             c = self._ctl()
             try:

@@ -119,6 +119,24 @@ class TestBoardFake(unittest.TestCase):
         self.assertIn("connected", info)
         self.assertIn("n_int", info["ref"])
 
+    def test_4_owner(self):
+        """分光計の持ち主（2026-11-13）: 古い観測の準備は断り、持ち主でない観測の終わりでは止めない。"""
+        from sam45compat.board import SpecdError
+        plan = mp.plan(_obs(bw2=125.0, k0_2=100000, arrays2=(20, 21)).s)
+        self.spec.prepare(plan, "20261113031033")            # 走っている OTF
+        st = self.spec.dumps()
+        with self.assertRaises(SpecdError):
+            self.spec.prepare(plan, "20261113030313")        # 遅れて読んだ前の PSW
+        self.assertIs(self.spec.dumps(), st)                 # 記録はそのまま
+        self.spec.finish("20261113030313")                   # 持ち主でない → 止めない
+        self.assertIn(self.spec.status()["state"], ("ARMED", "RUN"))
+        self.spec.prepare(plan, "20261113041722")            # 後の観測は切り替える
+        self.spec.finish("20261113031033")                   # 前の持ち主の終わり → 止めない
+        self.assertIn(self.spec.status()["state"], ("ARMED", "RUN"))
+        self.spec.finish("20261113041722")
+        self.assertEqual(self.spec.status()["state"], "IDLE")
+        self.assertIsNone(self.spec.owner)
+
     def test_2_lc_end_to_end(self):
         """暫定 LC ＋ specd --fake: 今の時刻の積分を持つ SAM45 のロギングを、積分が終わるたびに書き足す。"""
         with tempfile.TemporaryDirectory() as d:

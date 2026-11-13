@@ -24,7 +24,7 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-from .binning import TINT_NS, Binned, bin_interval
+from .binning import TINT_NS, Binned, bin_interval, expected_count
 
 _PYNQ = os.path.join(os.path.dirname(__file__), "..", "..", "external", "YATSUGATAKE", "sw", "pynq")
 if os.path.isdir(_PYNQ) and _PYNQ not in sys.path:
@@ -51,8 +51,32 @@ def key_of(core: int, s: int) -> str:
     return f"{'ABCD'[core]}{s}"
 
 
+class _Grow:
+    """書き足していく int64 の並び（倍々に広げる）。view() は今の長さぶん。"""
+
+    def __init__(self):
+        self._a = np.empty(1024, dtype=np.int64)
+        self.n = 0
+
+    def append(self, v: int) -> None:
+        if self.n == len(self._a):
+            b = np.empty(len(self._a) * 2, dtype=np.int64)
+            b[: self.n] = self._a[: self.n]
+            self._a = b
+        self._a[self.n] = v
+        self.n += 1
+
+    def view(self) -> np.ndarray:
+        return self._a[: self.n]
+
+
 class DiskDumps:
-    """観測 1 つぶんのダンプ（窓ごとのファイル）。binning.DumpSource として束ねに使う。"""
+    """観測 1 つぶんのダンプ（窓ごとのファイル）。binning.DumpSource として束ねに使う。
+
+    時刻のあるダンプは、窓ごとに時刻・ファイルの行・FLAGS を numpy の並びで持ち、積分の区間に入るものだけを
+    二分探索で切り出す（1 回の束ねの重さが観測の長さによらない）。2026-11-13 までは呼ぶたびに観測の初めからの
+    全部を配列に直していて、8 窓の OTF が 20 分を越えると LC が受けに追いつかず、specd の溜まりがあふれた（DROP）。
+    """
 
     def __init__(self, path: str, expect: Dict[str, Tuple[float, float]], tint_ns: int = TINT_NS,
                  no_pps: bool = False):
@@ -68,6 +92,11 @@ class DiskDumps:
         self._f = {k: open(os.path.join(path, f"{k}.f32"), "wb") for k in self.expect}
         self._t: Dict[str, list] = {k: [] for k in self.expect}
         self._fl: Dict[str, list] = {k: [] for k in self.expect}
+        # 時刻のあるダンプだけの索引（no_pps でないとき）: 時刻・ファイルの行・FLAGS。時刻が昇順でなければ印
+        self._vt: Dict[str, _Grow] = {k: _Grow() for k in self.expect}
+        self._vrow: Dict[str, _Grow] = {k: _Grow() for k in self.expect}
+        self._vfl: Dict[str, _Grow] = {k: _Grow() for k in self.expect}
+        self._unordered: Dict[str, bool] = {k: False for k in self.expect}
         self._lock = threading.Lock()
         self.n_axis_bad = 0
         self.n_notime = 0
@@ -100,6 +129,14 @@ class DiskDumps:
                 # ダンプは区間が終わってから届くので、受けた時刻から tint 1 つぶん戻したところを区間の始まりとする
                 self._anchor = (time.time_ns() - self.tint_ns, int(d["dump_t"]))
             self._f[k].write(data.tobytes())
+            if not self.no_pps and not fl & F_NOTIME:
+                t = int(d["utc_ns"])
+                vt = self._vt[k]
+                if vt.n and t <= int(vt.view()[-1]):
+                    self._unordered[k] = True
+                vt.append(t)
+                self._vrow[k].append(len(self._t[k]))
+                self._vfl[k].append(fl)
             self._t[k].append(int(d["utc_ns"]))
             self._dt[k].append(int(d["dump_t"]))
             self._fl[k].append(fl)
@@ -122,6 +159,8 @@ class DiskDumps:
         return list(h0 + n * self.tint_ns)
 
     def interval(self, key: str, st_ns: int, ed_ns: int) -> Binned:
+        if not self.no_pps:
+            return self._interval_indexed(key, st_ns, ed_ns)
         with self._lock:
             if key not in self._f:
                 return Binned(None, 0, 0)
@@ -143,6 +182,32 @@ class DiskDumps:
         if rows is not None:
             spec = spec[rows]
         return bin_interval(t, spec, st_ns, ed_ns, fl, self.tint_ns)
+
+    def _interval_indexed(self, key: str, st_ns: int, ed_ns: int) -> Binned:
+        """時刻のあるダンプの索引から、中心が [st, ed) に入るものだけを読む（binning.bin_interval と同じ結果）。"""
+        tint = self.tint_ns
+        with self._lock:
+            if key not in self._f:
+                return Binned(None, 0, 0)
+            if self._unordered[key]:
+                raise ValueError(f"{key}: ダンプの時刻が昇順でない")
+            vt = self._vt[key].view()
+            if len(vt) == 0:
+                return Binned(None, 0, 0)
+            n_exp = expected_count(st_ns, ed_ns, int(vt[0] % tint), tint)
+            # 中心 t + tint/2 が st 以上 ⇔ t が st − tint/2 以上（整数なので同じ）
+            i0 = int(np.searchsorted(vt, st_ns - tint // 2, side="left"))
+            i1 = int(np.searchsorted(vt, ed_ns - tint // 2, side="left"))
+            if i1 <= i0:
+                return Binned(None, 0, n_exp)
+            rows = self._vrow[key].view()[i0:i1].copy()
+            f = int(np.bitwise_or.reduce(self._vfl[key].view()[i0:i1]))
+            self._f[key].flush()
+        mm = np.memmap(os.path.join(self.path, f"{key}.f32"), dtype="<f4", mode="r")
+        spec = mm[: (len(mm) // NCH) * NCH].reshape(-1, NCH)
+        r0, r1 = int(rows[0]), int(rows[-1]) + 1
+        sel = spec[r0:r1] if r1 - r0 == len(rows) else spec[rows]
+        return Binned(sel.astype(np.float64).mean(axis=0), len(rows), n_exp, f)
 
     def latest_end_ns(self) -> Optional[int]:
         with self._lock:
