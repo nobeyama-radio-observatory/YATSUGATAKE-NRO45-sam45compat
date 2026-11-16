@@ -165,7 +165,8 @@ class Deliverer:
         before = _files(proj)
         log.info("%s: マージ: %s", name.log_id, " ".join(cmd))
         try:
-            r = subprocess.run(cmd, capture_output=True, timeout=self.merge_timeout_s)
+            # stdin を切る: ssh は標準入力を読むので、手でやり直すときにシェルのループの入力を読み尽くした（2026-11-16）
+            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=self.merge_timeout_s)
         except Exception as e:
             self.notify(f"{name.log_id}: マージを起動できない、または時間切れ",
                         f"{e!r}\nやり直し: python3 -m sam45compat.deliver {logging_path} --kind {job.kind} ...")

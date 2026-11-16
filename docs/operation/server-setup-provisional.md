@@ -107,6 +107,38 @@ network:
 
 確認: `ip -br addr`・`ip route`・`resolvectl status`・`ping -c 3 archive.ubuntu.com`
 
+### 4.3 運用に要る名前を `/etc/hosts` に書く（2026-11-16）
+
+DNS が引けなくても観測の後の処理が止まらないよう、名前で指している相手を `/etc/hosts` に書く。
+仮機では 2026-11-13 の 20:17〜21:30 のどこかから 11/14 06:21（needrestart が systemd-resolved を起こし直した）まで名前を引けず、
+マージの ssh（`zcos1c`）が全部 `Could not resolve hostname`（終了コード 255）で失敗した（約 28 観測。ロギングは `logging/` に残り、`sam45compat.deliver` で手でやり直せる）。
+同じ間に logrotate の Apache の reload も、`ports.conf` の `Listen <ホスト名>:80` で失敗した。観測（LC と RFSoC・bklog の間）は名前を使わないので影響なし。
+
+書くもの: 暫定 LC の設定の `merge_cmd` の計算機（`zcos1c`）、`ports.conf` の `Listen` にある名前（この計算機自身の名前）。
+`/etc/fstab` の bklog のサーバー・yk の `~/.ssh/config` のボードが名前なら、それも書く。
+
+```sh
+# 1. 今の IP を引いておく（DNS が引けるときに）。この計算機自身の名前は ip -4 -br addr の値と同じであること
+getent ahostsv4 <名前> | head -1          # 書く名前ごとに
+ip -4 -br addr
+grep -nE 'nfs' /etc/fstab; grep -n HostName ~/.ssh/config; sudo grep -n '^Listen' /etc/apache2/ports.conf
+grep -E '^hosts:' /etc/nsswitch.conf      # files が dns より先（既定）
+grep -rs manage_etc_hosts /etc/cloud/      # true なら起動のたびに /etc/hosts が書き直される（仮機では無いこと）
+
+# 2. 退避を取ってから書き足す
+sudo cp -a /etc/hosts /etc/hosts.bak-$(date +%Y%m%d)
+sudoedit /etc/hosts
+#   # sam45compat: DNS が引けなくてもマージと Apache が動くように（4.3）
+#   <IP>  <名前（FQDN）>  <短い名前>
+
+# 3. 確かめる
+getent -s files hosts <名前>              # 書いた IP が出る（DNS を見ずに）
+sudo apache2ctl configtest                # Syntax OK
+```
+
+- 次の観測のマージが通ること（暫定 LC のログの「観測生データを移した」）で、ssh まで含めて確かめる
+- **相手の IP が変わったら、ここを手で直す**（DNS の変更は効かない）。直さないと、マージは別の計算機に ssh しようとして失敗する（`from=` と鍵で止まる）
+
 ### 4.2 時刻（観測所 NTP → このサーバー → RFSoC 4x2）
 
 このサーバーは観測所の NTP サーバーだけから時刻をとり、RFSoC のいるネットワークに配る。
@@ -181,6 +213,21 @@ journalctl -u sam45compat-lc -f        # ログ（「置き場所を読めた」
 - 起動した時点（マウントが後なら、置き場所を初めて読めた時点）に既にあるロギングは扱わない
 - **観測の途中で起こし直すと、その観測は扱わない**（YKSP のロギングは途中で切れたまま残る）。
   `git pull` で更新したら、観測の合間に `sudo systemctl restart sam45compat-lc`
+- **OS の自動更新（unattended-upgrades）の後に、needrestart が LC を起こし直さないようにする**（2026-11-16）。
+  仮機では 2026-11-14 06:21 に libc6 の更新の後、needrestart が LC・Apache・resolved などを起こし直した（観測の合間だったので無事）。
+  観測中なら、その観測の YKSP のロギングは途中で切れる。LC だけを外し、Apache・NFS・resolved は外さない（起こし直しても観測は失われない）:
+
+  ```sh
+  sudo tee /etc/needrestart/conf.d/sam45compat.conf <<'EOF'
+  # 暫定 LC は観測の途中で起こし直すとその観測を失う。自動では起こし直さず、観測の合間に手で起こし直す
+  # （docs/operation/server-setup-provisional.md の 5.1）
+  $nrconf{override_rc}{qr(^sam45compat-lc\.service$)} = 0;
+  EOF
+  sudo perl -c /etc/needrestart/conf.d/sam45compat.conf     # syntax OK
+  ```
+
+  入れた後は、libc などが更新されても LC は古いライブラリのまま動く。日々の確認で
+  `sudo needrestart -b -r l | grep sam45compat-lc` が出たら、観測の合間に `sudo systemctl restart sam45compat-lc`
 - **試験運用（2026-11-12 から）は、タグの版だけを入れる**（`git pull` でなく `git checkout <タグ>`）。手順と版の記録は [`versioning.md`](versioning.md)。
   `config/bklog.local.json` に `"version_log": "/home/yk/bklog/sam45compat-versions.tsv"` を足す（`config/bklog.json` と同じ）
 
@@ -527,3 +574,4 @@ python3 external/YATSUGATAKE/sw/pynq/specctl.py --host $B STATUS
 | 2026-11-11 | RFSoC のボードの状態の常駐（5.5）の手順を書いた（まだボードに入れていない） |
 | 2026-11-11 | QL（`/ql/`）を 5.4 に足した。`/var/www/html/ql` を作り、Apache の設定に `/var/www/html/ql` を足す |
 | 2026-11-11 | RFSoC 4x2 をつないだ。yk の ssh の鍵、ボードの specd のサービスと sudoers（5.6）。暫定 LC を実機（`board.no_pps`、1PPS・10 MHz なし）で動かした |
+| 2026-11-16 | 11/13 夜〜11/14 朝に名前を引けず、マージが終了コード 255 で失敗していた（約 28 観測）。11/14 06:21 に unattended-upgrades（libc6）の後で needrestart が暫定 LC・Apache・resolved などを起こし直し、そこで戻った。運用に要る名前を `/etc/hosts` に書き（4.3。zcos1c と自分の名前）、needrestart から LC を外した（5.1）。255 のマージは `sam45compat.deliver` で手でやり直す（ssh が標準入力を読むので、シェルのループからは `</dev/null` を付ける。v0.3.1 で `deliver` 自身も標準入力を切った） |
