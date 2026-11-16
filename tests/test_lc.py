@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """lc（暫定 LC の本体）と tools/replay の試験。"""
 
+import ctypes as C
 import os
 import sys
 import tempfile
@@ -19,6 +20,10 @@ import replay  # noqa: E402
 
 SAMPLE = os.environ.get("SAM45_SAMPLE")
 NAME = "20260101000000.SAM45.obs.grp.prj"
+# マルチビームの実際のロギング（A05〜A08 が使えたころ。os.pathsep で区切る）。頭の L1 だけ読む
+BEAM_SAMPLES = os.environ.get("SAM45_BEAM_SAMPLES")
+MIRROR = {"A05": "A01", "A06": "A02", "A07": "A03", "A08": "A04",
+          "A21": "A17", "A22": "A18", "A23": "A19", "A24": "A20"}
 
 
 def _write(path, recs):
@@ -207,6 +212,77 @@ class TestBklogLayout(unittest.TestCase):
         # SAM45 のロギングに含まれていれば、その設定を使う（埋めない）
         obs2 = _obs(arrays=range(8))
         self.assertEqual(lcm.mirror_sources(obs2, mirror), {})
+
+    def _multibeam(self, recv, beams, arrays, freq=None):
+        """模擬の L1 に受信機の名前（H・V を交互）とビームの番号を入れる。freq: Array → (dcent_freq, dflif)。"""
+        obs = _obs(arrays=arrays)
+        o = obs.s
+        for idx, b in zip(arrays, beams):
+            name = recv + ("" if recv == "H40" else "HV"[idx % 2])
+            C.memmove(C.addressof(o.cfe_type[idx]), name.encode().ljust(10, b"\0"), 10)
+            o.imlt_no[idx] = b
+            o.dcent_freq[idx], o.dflif[idx] = (freq or {}).get(idx, (115e9, 9e9))
+        return obs
+
+    def test_mirror_beams_7bee(self):
+        # 7BEE: A01〜A14 = ビーム 1〜7（20260103004700 の並び）。A05〜A08 を抜いたロギングから 3・3・4・4 を決め直す
+        arrays = [0, 1, 2, 3] + list(range(8, 14))
+        obs = self._multibeam("MULT7", [1, 1, 2, 2, 5, 5, 6, 6, 7, 7], arrays)
+        filled = lcm.mirror_sources(obs, MIRROR)
+        o0 = lcm.mirror_arrays(obs, MIRROR).s
+        self.assertEqual(list(o0.imlt_no[4:8]), [1, 1, 2, 2])                 # 写しただけでは写し元のビーム
+        out, problems = lcm.mirror_beams(lcm.mirror_arrays(obs, MIRROR), filled)
+        self.assertEqual(problems, [])
+        self.assertEqual(list(out.s.imlt_no[:14]), [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7])
+        self.assertEqual([sl.cstr(out.s.cfe_type[i]) for i in range(4, 8)], ["MULT7H", "MULT7V"] * 2)
+
+    def test_mirror_beams_forest(self):
+        # FOREST: A01〜A08 = ビーム 1〜4、A09〜A16 = 別の周波数でビーム 1〜4（20260115061502 の並び）
+        arrays = [0, 1, 2, 3] + list(range(8, 16))
+        freq = {i: ((115e9, 9e9) if i < 8 else (110e9, 6e9)) for i in arrays}
+        obs = self._multibeam("TMULT", [1, 1, 2, 2] + [1, 1, 2, 2, 3, 3, 4, 4], arrays, freq)
+        out, problems = lcm.mirror_beams(lcm.mirror_arrays(obs, MIRROR), lcm.mirror_sources(obs, MIRROR))
+        self.assertEqual(problems, [])
+        self.assertEqual(list(out.s.imlt_no[:16]), [1, 1, 2, 2, 3, 3, 4, 4] * 2)
+        # A09〜A16 に同じ IF を同じ窓で入れる配線（RxArray_ptrnFOREST.txt の #153 など）でも決める
+        freq2 = {i: (115e9, 9e9) for i in arrays}
+        obs2 = self._multibeam("TMULT", [1, 1, 2, 2] + [1, 1, 2, 2, 3, 3, 4, 4], arrays, freq2)
+        out2, problems2 = lcm.mirror_beams(lcm.mirror_arrays(obs2, MIRROR), lcm.mirror_sources(obs2, MIRROR))
+        self.assertEqual((problems2, list(out2.s.imlt_no[4:8])), ([], [3, 3, 4, 4]))
+        # 入力 1〜8 がビーム 1,1,1,1,3,3,3,3 の配線（#168 など、160 通りのうち 146 通り）
+        obs4 = self._multibeam("TMULT", [1, 1, 1, 1] + [1, 1, 1, 1, 3, 3, 3, 3], arrays, freq2)
+        out4, problems4 = lcm.mirror_beams(lcm.mirror_arrays(obs4, MIRROR), lcm.mirror_sources(obs4, MIRROR))
+        self.assertEqual((problems4, list(out4.s.imlt_no[4:8])), ([], [3, 3, 3, 3]))
+        # ビームの数を越える（A01〜A04 がビーム 3・4）なら決めない
+        obs3 = self._multibeam("TMULT", [3, 3, 4, 4], [0, 1, 2, 3])
+        _, problems3 = lcm.mirror_beams(lcm.mirror_arrays(obs3, MIRROR), lcm.mirror_sources(obs3, MIRROR))
+        self.assertEqual([i for i, _ in problems3], [4, 5, 6, 7])
+
+    def test_mirror_beams_single_beam(self):
+        # マルチビームでない受信機（H40）は何もしない
+        obs = self._multibeam("H40", [0, 0, 0, 0], [0, 1, 2, 3])
+        filled = lcm.mirror_sources(obs, MIRROR)
+        out, problems = lcm.mirror_beams(lcm.mirror_arrays(obs, MIRROR), filled)
+        self.assertEqual((problems, list(out.s.imlt_no[4:8])), ([], [0, 0, 0, 0]))
+
+    @unittest.skipUnless(BEAM_SAMPLES, "SAM45_BEAM_SAMPLES が無い")
+    def test_mirror_beams_samples(self):
+        # 実際のロギング（A05〜A08 が使えたころ）から A05〜A08 を抜き、埋め直したビーム・受信機の名前が元と同じか
+        for path in BEAM_SAMPLES.split(os.pathsep):
+            with open(path, "rb") as f:
+                buf = f.read(sl.SIZES["L0"] + sl.SIZES["L1"])
+            orig = [r for r in sl.iter_records(buf) if r.kind == "L1"][0]
+            cut = sl.copy_record(orig)
+            for i in range(4, 8):
+                cut.s.iary_usefg[i] = 0
+            filled = lcm.mirror_sources(cut, MIRROR)
+            self.assertEqual(sorted(filled), [4, 5, 6, 7], path)
+            out, problems = lcm.mirror_beams(lcm.mirror_arrays(cut, MIRROR), filled)
+            self.assertEqual(problems, [], path)
+            for i in range(32):
+                if orig.s.iary_usefg[i]:
+                    self.assertEqual((out.s.imlt_no[i], sl.cstr(out.s.cfe_type[i])),
+                                     (orig.s.imlt_no[i], sl.cstr(orig.s.cfe_type[i])), (path, i))
 
     def test_nch_2048_two_windows(self):
         """2026-11-12 の観測と同じ形: サブアレイ分割 ON・2 窓・62.5 MHz を 2048 ch。SAM45 のロギングは A01〜A04・A17〜A20 だけ。"""

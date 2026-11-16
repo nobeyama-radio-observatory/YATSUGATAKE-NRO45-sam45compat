@@ -235,6 +235,11 @@ class Session:
         if cfg.mirror:
             filled = mirror_sources(obs, cfg.mirror)
             obs = mirror_arrays(obs, cfg.mirror)
+            obs, problems = mirror_beams(obs, filled)
+            for i, why in problems:
+                log.warning("%s: %s のビームを決められない: %s", self.name.log_id, sl.array_label(i), why)
+                self.notify(f"{self.name.log_id}: {sl.array_label(i)} のビームを決められない",
+                            f"{why}。写し元と同じビームのまま書く")
         ifm = mp.Sam45IfModel(cfg.sam45_if_ascending, cfg.sam45_k_offset)
         plan = mp.plan(obs.s, cfg.assign, ifm, cfg.shift)
         targets = sorted(set(plan.windows) | set(plan.skipped))
@@ -412,6 +417,60 @@ def mirror_arrays(obs: sl.Record, mirror: Dict[str, str]) -> sl.Record:
     if done:
         log.info("SAM45 のロギングに無い Array を、写した設定で埋めた: %s", " ".join(done))
     return obs
+
+
+# マルチビームの受信機（L1 の cfe_type から偏波の末尾 H・V を除いた名前）→ ビームの数（2026-11-16）。
+# 実際のロギングで確かめた並び（どちらも 1 ビームに H・V の 2 Array、ビームの番号は imlt_no）:
+#   FOREST（TMULTH・TMULTV）: A01〜A08 = ビーム 1〜4、A09〜A16 = 別の周波数でビーム 1〜4（20260115061502）
+#     FOREST の IF の配線は 160 通りあり（RxArray_ptrnFOREST.txt）、入力 1〜8・9〜16 のビームは 1,1,2,2,3,3,4,4（14 通り）か
+#     1,1,1,1,3,3,3,3（146 通り）。どちらも入力 5〜8 は入力 1〜4 と同じ偏波・側帯・IF で、ビームが 2 つ先
+#   7BEE（MULT7H・MULT7V）  : A01〜A14 = ビーム 1〜7（20260103004700）
+MULTIBEAM = {"TMULT": 4, "MULT7": 7}
+
+
+def _receiver(cfe_type: str):
+    """'TMULTH' → ('TMULT', 'H')。末尾が H・V でなければ (名前, '')。"""
+    if cfe_type[-1:] in ("H", "V"):
+        return cfe_type[:-1], cfe_type[-1]
+    return cfe_type, ""
+
+
+def mirror_beams(obs: sl.Record, filled: Dict[int, int]):
+    """埋めた Array（mirror_arrays）のビームの番号（imlt_no）を、写し元のビームと Array の間隔から決め直す。
+
+    mirror_arrays は写し元の欄を丸ごと写すので、A05〜A08 のビームが A01〜A04 と同じ（1・1・2・2）になる。
+    マルチビームの受信機は 1 ビームに H・V の 2 Array が並ぶので、埋めた Array のビームは
+    「写し元のビーム + Array の間隔 / 2」（A05 ← A01 ならビーム 1 + 2 = 3）。偏波（cfe_type の末尾）は
+    間隔が偶数なら写し元と同じなので、cfe_type は写したままでよい。
+    FOREST の 1,1,1,1,3,3,3,3 の配線でも、Array ごとに写し元から 2 つ先なので 3,3,3,3 になる。
+    確かめは受信機のビームの数を越えないことだけ。通らないものは写したまま（ビームが写し元と同じ）にして、理由を返す。
+    同じ信号・同じ窓の Array との重なりは確かめない（FOREST では入力 1〜8 と 9〜16 に同じ IF を入れる配線が普通にあり、
+    重なりは誤りの印にならない。2026-11-16）。
+    返り値: (L1 の写し, [(埋めた Array, 理由), ...])。マルチビームでない受信機（H40 など）は何もしない。
+    """
+    obs = sl.copy_record(obs)
+    o = obs.s
+    problems = []
+    done = []
+    for dst, src in sorted(filled.items()):
+        name, pol = _receiver(sl.cstr(o.cfe_type[src]))
+        if name not in MULTIBEAM:
+            continue
+        nbeam = MULTIBEAM[name]
+        b0 = o.imlt_no[src]
+        if not pol or not 1 <= b0 <= nbeam or (dst - src) % 2:
+            problems.append((dst, f"{sl.array_label(src)} から決められない（cfe_type {name}{pol}・ビーム {b0}・"
+                                  f"間隔 {dst - src}）"))
+            continue
+        beam = b0 + (dst - src) // 2
+        if not 1 <= beam <= nbeam:
+            problems.append((dst, f"ビーム {beam} が {name} のビームの数 {nbeam} を越える"))
+            continue
+        o.imlt_no[dst] = beam
+        done.append(f"{sl.array_label(dst)}={name}{pol}/{beam}")
+    if done:
+        log.info("埋めた Array のビームを決め直した: %s", " ".join(done))
+    return obs, problems
 
 
 class LC:

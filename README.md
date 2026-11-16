@@ -103,6 +103,8 @@ YATSUGATAKE が書く Array は、将来ほかにも足すかもしれません�
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 # 実際の SAM45 のロギングを使う試験（サンプルはリポジトリに入れていない）
 SAM45_SAMPLE=/path/to/<ログ ID>.SAM45.<指示書名>.<group>.<project> PYTHONPATH=src python3 -m unittest discover -s tests -v
+# マルチビーム（FOREST・7BEE）の、A05〜A08 が使えたころのロギング（: で区切る。頭の L1 だけ読む）
+SAM45_BEAM_SAMPLES=/path/to/<FOREST のロギング>:/path/to/<7BEE のロギング> PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
 ## 動かし方
