@@ -10,7 +10,9 @@ from sam45compat import version as ver
 
 
 def _git(cwd, *args):
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+    # commit・tag -a は名前とメールが要る。動かす人の git config に頼らない（本番機の yk には無かった。2026-11-20）
+    ident = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run(["git", *ident, *args], cwd=cwd, check=True, capture_output=True)
 
 
 class TestVersion(unittest.TestCase):
@@ -22,7 +24,7 @@ class TestVersion(unittest.TestCase):
     def test_tag_and_dirty(self):
         with tempfile.TemporaryDirectory() as root:
             _git(root, "init", "-q")
-            _git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "a")
+            _git(root, "commit", "-q", "--allow-empty", "-m", "a")
             _git(root, "tag", "-a", "v9.9.9", "-m", "試験")
             with open(os.path.join(root, "f"), "w") as f:
                 f.write("x")
