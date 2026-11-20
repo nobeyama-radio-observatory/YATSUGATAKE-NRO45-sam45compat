@@ -5,7 +5,7 @@
 
 - 記録を始めた日: 2026-11-19
 - 作業者: 西村
-- 状態: 作業中（OS のインストールから）
+- 状態: 運用中（2026-11-20 の 14:15 から仮機と入れ替えた）。残り: 下の「残っていること」
 
 ## 本番機の構成
 
@@ -329,6 +329,13 @@ rsync -aH --info=progress2 -e "$K" /srv/download/ $N:/srv/download/
 - root の持ち物（ホストの鍵・snakeoil の証明書と鍵・`/etc` の設定）は仮機で `tar` にまとめて送り、本番機の `/root/yk-c-etc/` に展開して、1 つずつ見て入れた。
   `/root` の中は `ykadm` の `*` では展開されない（`sudo sh -c "cat .../*"` で見る）
 - **ホストの鍵は、`/srv/download` の転送が終わってから**入れる（途中で変わると、転送のやり直しで仮機の ssh が止まる）
+- 転送の途中で暫定 LC を実機の設定で起こしてよい（使う口と書く場所が違う。観測のファイル名には時刻が入り、`deliver` は同じ名前を上書きしない）
+- 写し漏れの確かめ方: 仮機から `rsync -aHn --stats` で `Number of regular files transferred: 0`。
+  `bklog` の版の記録（`sam45compat-versions.tsv`）は、本番機の LC が書き足すので違って出る。**写し直さない**（本番機の行が消える）
+- 写し終えたら: 一時的な鍵を両方から消す。仮機で root・777 だったフォルダ（`rsync` で 777 のまま来る）を 755 にする
+  （`sudo find /srv/download -maxdepth 2 -type d -perm -o+w -exec chmod 755 {} +`）。ホストの鍵を `/root/yk-c-etc/etc/ssh/` から写して `systemctl restart ssh`
+- 最後に再起動して、wait-online が待たないこと、`sam45compat-lc`・`apache2`・`nfs-server`・`chrony`・`ssh` が起きること、bklog の automount・ZFS・NFS の公開・NTP を確かめた（2026-11-20）。
+  本番機を起こし直しても、マージの計算機の NFS のマウント（`hard`）はつながり直した
 
 仮機の設定から本番機に入れたもの:
 
@@ -359,6 +366,14 @@ rsync -aH --info=progress2 -e "$K" /srv/download/ $N:/srv/download/
   仮機の記録の 5.3 の fstab の行（`nofail`・`x-systemd.automount` 付き）を足すかは、担当者と決める（記入: ）
 
 - マージの ssh は、LC の設定（`merge_cmd`）と同じユーザー名・名前（FQDN）で試す。`known_hosts` は FQDN で入っているので、短い名前では `Host key verification failed` になる
+
+### 4.3 残っていること
+
+- マージの計算機の `/etc/fstab` に `yksp` の行を足すか（今は手でマウント。起こし直すと消える）。担当者と決める
+- 仮機: 止めて、ディスクは消さずに予備・控えとして残す（`/srv/download` の写しがある）
+- ZFS・SMART の異常を知らせる手段（ZED のメール・smartd）。運用者への通知の手段（[`../plan.md`](../plan.md) の 6 章）と一緒に決める
+- 配信の速さの制限・優先度（仮機の記録の 5.2 の「まだ」）
+- USB の NIC（ゲートウェイと DNS がある）が抜けると、外と名前を引くのが止まる（観測・マージ・NTP は `yk-c` 側なので止まらない）
 
 ## NIC の割り当て
 
@@ -418,3 +433,4 @@ wait-online は、netplan に書いた NIC が**すべて**つながるまで待
 | 2026-11-20 | 仮機を DHCP で起こし、データ・鍵・設定を写し始めた（4.2）。bklog のマウント・`/etc/hosts`・NFS の公開・`yk-c` 側の DNS を入れた |
 | 2026-11-20 | ボードが本番機から時刻をとることを確かめた。証明書（仮機の snakeoil）と `ServerName` を入れ、`/srv/download` の転送の途中で暫定 LC を実機の設定（`--config config/bklog.local.json`）で起こした（14:15） |
 | 2026-11-20 | マージの ssh が通った。マージの計算機の NFS のマウントが古くなっていた（`Stale file handle`）ので付け直した（4.2） |
+| 2026-11-20 | 本番機で最初の観測（14:34、OTF）が、ロギング・マージ・配信まで通った。写し漏れが無いことを確かめ、一時的な鍵を消し、777 のフォルダを直し、ホストの鍵を入れ、再起動して全部が起きることを確かめた（4.2） |

@@ -100,7 +100,7 @@ sam45compat の残りの作業。方式と決めたことは [`design/standin-st
 - [ ] IF 入力 5〜8 を ADC_A〜D に入れ直す方法（分岐・つなぎ替え）。周波数の変換は要らない（SAM45 と同じ 2〜4 GHz）
 - [ ] 10 MHz・1PPS を SAM45 と同じ基準からとる
 - [ ] RFSoC と暫定 LC の置き場所、COSMOS のネットワーク・ロギングのマウントとのつなぎ方（仮機 yk-c では済み: bklog を fstab で読み取り専用に automount、暫定 LC は systemd のサービス。[`operation/server-setup-provisional.md`](operation/server-setup-provisional.md)。2026-11-10）
-- [ ] 本番機のセットアップ（2026-11-19 に届いた）。手順は [`operation/server-setup.md`](operation/server-setup.md) に残す。仮機との違いも書く。OS・一時置き場の LV・ZFS の RAIDZ2・sam45compat の試験まで済んだ（2026-11-20）。
+- [ ] 本番機のセットアップ（2026-11-19 に届いた）。手順は [`operation/server-setup.md`](operation/server-setup.md) に残す。仮機との違いも書く。2026-11-20 の 14:15 から本番機で運用している（仮機と入れ替えた。残りは `server-setup.md` の 4.3）。
   ディスクは一時置き場（`/home/yk/bklog`。追記中のロギング・10.24 ms の一時ファイル）とストレージ（RAIDZ、別にマウント。書き終えたロギング・観測生データ）を分け、NIC は 3 本以上（ボード用・bklog 用・ダウンロード用）（2026-11-10）
 - [ ] 運用者への通知の手段（メール・Slack など）。今はログに `通知:` で出すだけ
 - [ ] **状態のページ**（`status.py`・`tools/status/index.html`・[`tools/apache/yksp-status.conf`](../tools/apache/yksp-status.conf) で済み。2026-11-11）: 暫定 LC と RFSoC の状態を、所内 LAN から認証なしで 1 秒ごとに見る（[`design/status-page.md`](design/status-page.md)）。残りは仮機に入れること（[`operation/server-setup-provisional.md`](operation/server-setup-provisional.md) の 5.4）と、毎秒の `STATUS` が取得に響かないかを実機で確かめること。ボードの温度・電源・CPU・メモリはボードの常駐（`tools/boardhk.py`）から読む（ボードに入れるのは 5.5。閾値は仮）。QL（`/ql/`、`ql.py`・`tools/ql/index.html`）: 窓ごとに直近 1 秒の生のスペクトルと積分ごとの Ta*（2026-11-11）
