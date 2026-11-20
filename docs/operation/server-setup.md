@@ -167,9 +167,141 @@ pytest
 - 2026-11-20: v0.3.2、Python 3.14.4。1 failed・108 passed・14 skipped。
   落ちたのは `tests/test_version.py` の `test_tag_and_dirty`。試験が `git tag -a` に名前とメールを渡しておらず、`yk` に `git config user.name` が無いと落ちる（仮機の `yk` には設定があった）。
   試験を直した（v0.3.3）。ソフトの動きには関係しない
+- 2026-11-20: v0.3.3 を入れ、109 passed・14 skipped（全部通った）
 - 本番機の `yk` には `git config user.name` を設定していない（`yk` では commit しない）
 
+### 3.1 時刻（仮機の記録の 4.2）
+
+観測所の NTP サーバーは**2 台**指定する（仮機の実際の設定と同じ。仮機の記録には 1 台しか書いていなかった。2026-11-20）。
+`/etc/chrony/chrony.conf` の `pool` の行はコメントにする。
+
+```
+# /etc/chrony/sources.d/observatory.sources（IP は仮機のものを写す）
+server <観測所 NTP サーバー 1> iburst prefer
+server <観測所 NTP サーバー 2>
+```
+
+- **外の NTP を止める**: Ubuntu 26.04 は `chrony.conf` の `pool` とは別に、`/etc/chrony/sources.d/ubuntu-ntp-pools.sources` で Canonical の NTS のサーバー（`ntp-nts-*.canonical.com`）を使う。
+  `pool` の行だけ止めても、こちらが残っていた（2026-11-20）。行をコメントにする（ファイルは消さない）:
+
+  ```sh
+  sudo cp -a /etc/chrony/sources.d/ubuntu-ntp-pools.sources /root/ubuntu-ntp-pools.sources.orig
+  sudo sed -i -E 's/^(pool|server)/#\1/' /etc/chrony/sources.d/ubuntu-ntp-pools.sources
+  grep -rnE '^(pool|server)' /etc/chrony/      # observatory.sources の 2 行だけ
+  sudo systemctl restart chrony
+  ```
+
+- 2026-11-20: 外の NTP を止めた。観測所の NTP サーバー 2 台は `Reach 0`（返事なし）。本番の置き場所に据えるとつながる（それまでは時刻が合わなくてよい）。据えた後に `chronyc sources` で `^*` を確かめる
+- RFSoC に配る設定（`conf.d/serve.conf` の `allow`）は、ボード用の NIC を決めてから入れる
+
+### 3.2 needrestart・暫定 LC（ダミー）・状態のページの置き場所（仮機の記録の 5.1・5.4 の 1）
+
+仮機の記録と同じ。`ykadm` は `/home/yk` の中に `cd` できないので、`sudo cp /home/yk/YATSUGATAKE-NRO45-sam45compat/tools/systemd/sam45compat-lc.service /etc/systemd/system/` のようにパスを付ける。
+
+- 2026-11-20: サービスの既定（`--fake`、`config/bklog-dummy.json`）で起こした。版は sam45compat v0.3.3・YATSUGATAKE v1.4.0-2-g13b5ae5。
+  bklog をマウントしていないので「置き場所を読めない」が出る（入れ替えでマウントするまでこのまま）。`status.json`・`ql.json` は書けている
+
+### 3.3 Apache（仮機の記録の 5.2・5.4）
+
+証明書: 仮機も `ssl-cert` の自己署名（snakeoil。`/etc/ssl/certs/ssl-cert-snakeoil.pem`・`/etc/ssl/private/ssl-cert-snakeoil.key`）だった。
+本番機の snakeoil は入れたときのホスト名（`yk-new`）で作られるので、入れ替えのときに仮機の 2 つのファイルを写す（利用者がブラウザで許可した証明書をそのまま使うため。2026-11-20）。
+
+```sh
+sudo apt install -y apache2 ldap-utils ssl-cert
+sudo a2dissite 000-default
+sudo a2enmod ldap authnz_ldap ssl ratelimit headers rewrite deflate
+sudo a2ensite default-ssl
+sudo cp /home/yk/YATSUGATAKE-NRO45-sam45compat/tools/apache/yksp-status.conf /etc/apache2/conf-available/
+sudo a2enconf yksp-status
+sudo apache2ctl configtest && sudo systemctl restart apache2
+curl -sk -o /dev/null -w '%{http_code}\n' https://localhost/status/      # 200
+```
+
+- 2026-11-20: 状態のページが 200。`AH00558`（ServerName が無い）は入れ替えのときに `ServerName` を書いて消す
+- 仮機では、配信（LDAP）の設定は `sites-` でなく `conf-enabled/download.conf` にある。中身は [`tools/apache/yksp-download.conf`](../../tools/apache/yksp-download.conf) の `<...>` を埋めたものと同じだった（2026-11-20 に比べた）。
+  本番機も同じ名前（`conf-available/download.conf`）で入れる。`AuthLDAPURL` の値は仮機のものを写す（リポジトリには書かない）
+- 仮機の `ports.conf`: 80 番は名前（2 つの NIC の名前）で、443 番は全部の NIC で待ち受けていた。本番機の 80 番は入れ替えのときに決める（名前で待つと、名前を引けないときに reload が落ちる。仮機の記録の 4.3）
+- `/srv/download` は `yk` の持ち物・755 にする（仮機は root・777 だった。書くのは暫定 LC と、`all_squash` で `yk` になる NFS だけ）
+
 ## 4. 仮機から入れ替える
+
+### 4.1 固定 IP とホスト名（2026-11-20）
+
+仮機を止めてから行う（同じ IP を使うため）。ssh 越しだと、IP が変わったところで切れて `netplan try` を確かめられないので、**コンソールで**行う。
+
+`/etc/netplan/00-installer-config.yaml` を `/root/` に退避し、`/etc/netplan/01-static.yaml`（`chmod 600`）に置き換える（値は記入しない。仮機と同じ）:
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    enp7s0:                       # オンボード 2.5 G、yk-c
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      addresses: [<yk-c の IP>/24]
+      nameservers:                # yk-c のセグメントの DNS も書く（USB の口が抜けても名前を引ける。仮機と同じ）
+        addresses: [<yk-c 側の DNS 1>, <yk-c 側の DNS 2>]
+    enp2s0:                       # PCIe 10 G、ボード用
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      addresses: [<ボード用の IP>/24]
+      optional: true
+    enx3495db2cd6c6:              # USB 1 G、yk-x。デフォルトゲートウェイはこちら
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      addresses: [<yk-x の IP>/24]
+      routes:
+        - to: default
+          via: <yk-x のセグメントのゲートウェイ>
+      nameservers:
+        addresses: [<DNS 1>, <DNS 2>]
+        search: [<ドメイン>]
+      # optional を付けない（下の「起動で wait-online が 2 分待つ」）
+```
+
+**起動で wait-online が 2 分待つ（2026-11-20）**: netplan 1.2 は `optional: true` を `.network` の `RequiredForOnline=` でなく、
+wait-online の drop-in（`/run/systemd/generator.late/systemd-networkd-wait-online.service.d/10-netplan.conf`）で表す。`optional` でない口について:
+
+```
+ExecStart=/lib/systemd/systemd-networkd-wait-online -i enp7s0:degraded
+ExecStart=/lib/systemd/systemd-networkd-wait-online --any --dns -o routable -i enp7s0
+```
+
+2 行目は「`optional` でない口のどれかで、デフォルトの経路と DNS が使える」まで待つ。
+初めは USB の口（ゲートウェイと DNS がある）を `optional` にしたので、`enp7s0`（ゲートウェイも DNS も無い）だけで満たそうとして、毎回 2 分の時間切れになった。
+USB の口から `optional` を外すと 2 行とも USB の口が入ったが、それでも 2 分待った。`--dns` が、起動の直後（まだ名前を引いていない）に満たされないため
+（起動の後に手で動かすと、名前を引いた後なので満たされ、原因が見えない）。
+
+**直し方**: wait-online を上書きし、DNS は待たない（netplan の `10-netplan.conf` より後に読まれ、空の `ExecStart=` で netplan の 2 行を消す）。これで wait-online は ≒ 2 s になった（2026-11-20）:
+
+```sh
+sudo mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
+sudo tee /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf <<'EOF'
+# netplan の 10-netplan.conf の --dns は、起動直後（まだ名前を引いていない）に満たされず、毎回 2 分の時間切れになった（2026-11-20）。
+# DNS は待たず、enp7s0 のリンクと、USB の口（デフォルトの経路と DNS がある）の経路だけを待つ。docs/operation/server-setup.md の 4.1
+[Service]
+ExecStart=
+ExecStart=/usr/lib/systemd/systemd-networkd-wait-online -i enp7s0:degraded -i enx3495db2cd6c6:routable --timeout=60
+EOF
+sudo systemctl daemon-reload
+systemctl cat systemd-networkd-wait-online | grep ExecStart    # 最後の 2 行が上の 2 行
+```
+
+- 待つのは最大 60 s。USB の口が抜けていても 60 s で先に進む。名前が引けるかは待たない（自分とマージの計算機の名前は `/etc/hosts` にある）
+- **口の名前を変えたら（USB の NIC を差し替えたなど）、ここの `-i` も直す**。netplan の yaml を直しただけでは、この上書きは変わらない
+- 何を待っているかを見るには、`[Service]` に `Environment=SYSTEMD_LOG_LEVEL=debug` を足して起こし直し、`journalctl -b -u systemd-networkd-wait-online`
+
+- 確かめ方: `systemctl cat systemd-networkd-wait-online`（drop-in も出る）。手で `systemd-networkd-wait-online` を引数なしで動かしても drop-in は通らないので、原因は見えない
+- `networkctl status` の `Required For Online` は、netplan 1.2 では `optional` でも `yes` のまま（wait-online の引数で決まるため）
+
+- IPv6 は使わない（`accept-ra: false`）。DHCP の間は RA で IPv6 のアドレスをとっていた。apt が「Waiting for headers」で待たされた件（2.0）の疑いの一つでもある
+- ホスト名: `sudo hostnamectl set-hostname yk-c`。`/etc/hosts` の `127.0.1.1 yk-new` の行を消し、自分の 2 つの名前を実際の IP で書く（仮機の記録の 4.3）
+- `grep -rs manage_etc_hosts /etc/cloud/` は `templates/hosts.debian.tmpl` の説明の行だけ（設定は無い。`/etc/hosts` は書き直されない）
+- 2026-11-20: 3 つの口とも仮機の IP になり、デフォルトゲートウェイは USB 側。DNS は DHCP でもらっていた 2 台を書いた。
+  観測所の NTP 2 台に届いた（`^*`）。LDAP に届いた（`ldapsearch` で自分のアカウントが返った）
 
 （記入: 手順を決める。観測のない時間に行う）
 
@@ -177,6 +309,56 @@ pytest
 - SSH のホストの鍵（`/etc/ssh/ssh_host_*`）を仮機から写すと、マージの計算機などの `known_hosts` を直さずに済む
 - 仮機の `/srv/download` と `/home/yk/bklog` に残っているものを写す
 - `yk` の `~/.ssh`（ボードの鍵・マージの鍵）、`config/bklog.local.json`、Apache の設定と証明書
+
+### 4.2 仮機から写す（2026-11-20）
+
+仮機は止めて、`yk-x` 側の口だけを DHCP にして起こした（固定 IP は本番機が使っているため）。
+**仮機から本番機の `yk` に送る**（仮機は `PasswordAuthentication no`）。写すための一時的な鍵（`~/.ssh/id_ed25519_move`）を仮機の `yk` に作り、本番機の `yk` の `authorized_keys` に入れた。
+送り先は IP で書く（仮機の `/etc/hosts` では `yk-x`・`yk-c` が仮機自身を指す）。
+
+```sh
+# 仮機の yk で（tmux の中で）
+N=yk@<yk-x の IP>; K="ssh -i ~/.ssh/id_ed25519_move"
+rsync -aH -e "$K" --exclude tmp/ ~/bklog/ $N:bklog/              # tmp/ は 10.24 ms の一時ファイル（マージ済みなら要らない）
+rsync -aH -e "$K" --exclude authorized_keys --exclude 'id_ed25519_move*' ~/.ssh/ $N:.ssh/
+rsync -aH -e "$K" ~/YATSUGATAKE-NRO45-sam45compat/config/bklog.local.json $N:YATSUGATAKE-NRO45-sam45compat/config/
+rsync -aH --info=progress2 -e "$K" /srv/download/ $N:/srv/download/
+```
+
+- 量（2026-11-20）: `/srv/download` ≒ 207 GB、`bklog`（`tmp/` を除く）≒ 2.2 GB（`tmp/` を含めると 26 GB）
+- root の持ち物（ホストの鍵・snakeoil の証明書と鍵・`/etc` の設定）は仮機で `tar` にまとめて送り、本番機の `/root/yk-c-etc/` に展開して、1 つずつ見て入れた。
+  `/root` の中は `ykadm` の `*` では展開されない（`sudo sh -c "cat .../*"` で見る）
+- **ホストの鍵は、`/srv/download` の転送が終わってから**入れる（途中で変わると、転送のやり直しで仮機の ssh が止まる）
+
+仮機の設定から本番機に入れたもの:
+
+| 項目 | 本番機 |
+|---|---|
+| bklog の NFS（`/etc/fstab`） | 仮機と同じ 1 行（サーバーは `zcos1c`。マージの計算機と同じ）。`sudo mkdir -p /cosmos3/45m/bklog` してから。本番機は仮機の `yk-c` の IP なので許されている |
+| `/etc/hosts` | `zcos1c` の行を足した（仮機の記録の 4.3） |
+| NFS の公開（`/etc/exports.d/yksp-merge.exports`） | 仮機と同じ。ただし `anonuid`・`anongid` は本番機の `yk`（1001）。`nfs-kernel-server` を入れ、`nfs-server.service.d/zfs.conf` に `RequiresMountsFor=/srv/download` |
+| chrony | `conf.d/serve.conf` に `allow <ボードのセグメント>/24`（ボードに時刻を配る）。ボードは `systemd-timesyncd` で、本番機のボード用の IP をとりに来る（落ち着くと 34 分おき）。確かめ方: `sudo chronyc clients`（root でないと `501 Not authorised`）、ボードで `timedatectl show-timesync` |
+| Apache | `download.conf`・`default-ssl.conf` は仮機と同じ（コメントだけ違う）。80 番は仮機の名前の `Listen` にせず、`Listen 80`（全部の口）のまま（名前を引けないときや USB の口が抜けたときにも Apache が起きるように） |
+| 暫定 LC のサービス | 仮機は `sam45compat-lc.service.d/override.conf` で `ExecStart` を `--config config/bklog.local.json`（`--fake` なし）にしていた |
+
+- 仮機の `/etc/chrony/sources.d/` には `ubuntu-ntp-pools.sources` が残っていた（行がコメントでなければ、仮機は外の NTP も使っていた）
+- **マージの計算機の NFS のマウントが古くなる**: マージの計算機は仮機の `/srv/download` をマウントしたままで、本番機が同じ IP・同じパスで公開しても、
+  中身は別のファイルシステム（ZFS）なので `Stale file handle` になった（2026-11-20）。マージの計算機でマウントを外して付け直す（COSMOS 側の操作なので、担当者と相談して行う）:
+
+  ```sh
+  # マージの計算機で（root）
+  mount | grep yksp
+  umount -l /cosmos3/45m/bklog/yksp
+  mount -t nfs4 -o vers=4.2,hard,noatime yk-c:/srv/download /cosmos3/45m/bklog/yksp
+  ls /cosmos3/45m/bklog/yksp | head -3
+  touch /cosmos3/45m/bklog/yksp/.test && ls -ln /cosmos3/45m/bklog/yksp/.test && rm /cosmos3/45m/bklog/yksp/.test   # 持ち主が本番機の yk の uid
+  ```
+
+  2026-11-20 に付け直し、本番機の中身が見え、書くと uid 1001（本番機の `yk`）になった。
+  **マージの計算機の `/etc/fstab` にも autofs にも `yksp` の行は無かった**（仮機の頃から手でマウントしていた）。マージの計算機を起こし直すとマウントが消え、マージが失敗する。
+  仮機の記録の 5.3 の fstab の行（`nofail`・`x-systemd.automount` 付き）を足すかは、担当者と決める（記入: ）
+
+- マージの ssh は、LC の設定（`merge_cmd`）と同じユーザー名・名前（FQDN）で試す。`known_hosts` は FQDN で入っているので、短い名前では `Host key verification failed` になる
 
 ## NIC の割り当て
 
@@ -194,7 +376,16 @@ wait-online は、netplan に書いた NIC が**すべて**つながるまで待
   ボード用・ダウンロード用・USB の NIC には `optional: true` を付ける（ボードの電源が落ちていても起動が止まらないように）
 
 
-（記入: 2.5 Gbps・10 Gbps・USB 1 Gbps を、ボード用・bklog 用・ダウンロード用のどれに当てるか）
+決めた割り当て（2026-11-20。IP は仮機と同じ。値は文書に書かない）:
+
+| NIC | 名前 | 速さ | つなぐ先 | ホスト名 |
+|---|---|---|---|---|
+| `enp7s0` | オンボード | 2.5 G | 所内 LAN の `yk-c` のセグメント（仮機の `yk-c` の IP） | `yk-c`（この計算機のホスト名） |
+| `enp2s0` | PCIe | 10 G | ボード用（プライベート、RFSoC 4x2） | — |
+| `enx3495db2cd6c6` | USB | 1 G | 所内 LAN の `yk-x` のセグメント（仮機の `yk-x` の IP） | `yk-x` |
+
+- USB の NIC は名前が MAC から決まる（`enx` ＋ MAC）。差し替えると名前が変わる
+- USB の NIC は、netplan に書く前から DHCP をとっていた（2026-11-20）。initrd（dracut）が毎回 `/run/systemd/network/zzzz-dracut-default.network`（ループバック以外の口を全部 DHCP）を作るため。netplan に書いた口は netplan の設定が先に当たる。**新しい口を挿すと、netplan に書くまで勝手に DHCP をとる**
 
 - USB の NIC は、抜けたり止まったりしたときに観測が止まらない用途（ダウンロード用）に当てる案
 
@@ -217,3 +408,13 @@ wait-online は、netplan に書いた NIC が**すべて**つながるまで待
 | 2026-11-20 | 起動が wait-online で長く待たされたので、`enp2s0` を `optional`、`wlp6s0` を networkd の管理から外した（NIC の割り当ての節） |
 | 2026-11-20 | ZFS の RAIDZ2（`tank`、`/srv/download`）を作った（2.2）。NIC は `enp2s0` が 10 G、`enp7s0` が 2.5 G |
 | 2026-11-20 | `yk` に v0.3.2 を clone し、`pytest` で 1 件だけ落ちた（試験の不備。3 章） |
+| 2026-11-20 | 試験を直した v0.3.3 を入れ、`pytest` が全部通った（3 章） |
+| 2026-11-20 | chrony を観測所の NTP 2 台だけにした（3.1）。今の置き場所からは届かない |
+| 2026-11-20 | needrestart から LC を外し、暫定 LC をダミーで起こした（3.2） |
+| 2026-11-20 | Apache を入れ、状態のページが本番機の上で開けた（3.3） |
+| 2026-11-20 | 配信の設定（`download.conf`）を入れた。LDAP は今の置き場所から届かないので、配信の試験は据えた後。試験のフォルダを消して電源を切り、本番の置き場所へ移した |
+| 2026-11-20 | 本番の置き場所で、固定 IP（3 つの口）とホスト名 `yk-c` にした（4.1）。NTP・LDAP に届いた |
+| 2026-11-20 | 起動が wait-online で毎回 2 分待った。netplan の `--dns` が原因で、wait-online を上書きして直した（4.1） |
+| 2026-11-20 | 仮機を DHCP で起こし、データ・鍵・設定を写し始めた（4.2）。bklog のマウント・`/etc/hosts`・NFS の公開・`yk-c` 側の DNS を入れた |
+| 2026-11-20 | ボードが本番機から時刻をとることを確かめた。証明書（仮機の snakeoil）と `ServerName` を入れ、`/srv/download` の転送の途中で暫定 LC を実機の設定（`--config config/bklog.local.json`）で起こした（14:15） |
+| 2026-11-20 | マージの ssh が通った。マージの計算機の NFS のマウントが古くなっていた（`Stale file handle`）ので付け直した（4.2） |
